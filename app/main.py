@@ -125,9 +125,12 @@ def main(webview_module=None) -> int:
         title,
         url=UI_INDEX.as_uri(),
         js_api=api,
-        width=1440,
-        height=900,
-        min_size=(1080, 700),
+        width=1200,
+        height=800,
+        min_size=(1024, 640),
+        # A fixed 1440×900 window gets clamped by Windows on 1280×720 screens
+        # while WebView2 keeps the larger viewport, clipping the right toolbar.
+        maximized=True,
         text_select=True,
         confirm_close=False,
     )

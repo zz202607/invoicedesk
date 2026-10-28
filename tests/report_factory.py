@@ -26,6 +26,7 @@ def sample_invoice(
     category_rule: str = "test",
     buyer: str = "示例公司",
     invoice_type: InvoiceType = InvoiceType.FULL_DIGITAL_NORMAL,
+    confidence: dict[str, str] | None = None,
 ) -> ParsedInvoice:
     return ParsedInvoice(
         source_path=source_path,
@@ -42,7 +43,7 @@ def sample_invoice(
         item_summary=item,
         category=category,
         category_rule=category_rule,
-        confidence={"amount_total": "high"},
+        confidence=confidence or {"amount_total": "high"},
         warnings=[],
     )
 

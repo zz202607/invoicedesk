@@ -94,6 +94,76 @@ def test_bootstrap_envelope(api: Api) -> None:
     assert "db_path" not in data
 
 
+def test_dashboard_envelope_and_filters(api: Api, tmp_path: Path) -> None:
+    connection = db.connect(tmp_path / "workbench.db")
+    try:
+        add_invoice(
+            connection,
+            index=1,
+            number="DASH1",
+            date="2026-07-01",
+            seller="甲商家",
+            category="餐饮费",
+            amount=Decimal("10.00"),
+        )
+        add_invoice(
+            connection,
+            index=2,
+            number="DASH2",
+            date="2026-08-02",
+            seller="乙商家",
+            category="交通费",
+            amount=None,
+            review=True,
+        )
+        add_invoice(
+            connection,
+            index=3,
+            number="DASH3",
+            date="",
+            seller="丙商家",
+            category="餐饮费",
+            amount=Decimal("5.00"),
+        )
+    finally:
+        connection.close()
+
+    response = api.dashboard()
+    assert response["ok"] is True, response
+    data = response["data"]
+    assert data["count"] == 3
+    assert data["total_cents"] == 1500
+    assert data["total"] == "15.00"
+    assert data["review_count"] == 2
+    assert data["missing_amount_count"] == 1
+    assert data["missing_source_count"] == 3
+    assert data["linked_count"] == 0
+    assert [
+        (item["category"], item["count"], item["total"]) for item in data["categories"]
+    ] == [("餐饮费", 2, "15.00"), ("交通费", 1, "0.00")]
+    assert [item["month"] for item in data["months"]] == [
+        "2026-07",
+        "2026-08",
+        "未知日期",
+    ]
+
+    filtered = api.dashboard({"include_review": False})
+    assert filtered["ok"] is True
+    assert filtered["data"]["count"] == 1
+    assert filtered["data"]["review_count"] == 0
+
+    searched = api.dashboard({"search": "甲商家"})
+    assert searched["data"]["count"] == 1
+    assert searched["data"]["total"] == "10.00"
+
+    bad_range = api.dashboard({"date_from": "2026-09-01", "date_to": "2026-08-01"})
+    assert bad_range["ok"] is False
+    assert "不能晚于" in bad_range["error"]
+    bad_date = api.dashboard({"date_from": "07/01/2026"})
+    assert bad_date["ok"] is False
+    assert "YYYY-MM-DD" in bad_date["error"]
+
+
 def test_report_line_workflow(api: Api) -> None:
     report_id = _create_report(api)
 

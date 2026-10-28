@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <title>发票管家</title>
+<script src="theme.js"></script>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -28,6 +29,7 @@
         <span class="version">v{{ boot.version }}</span>
       </div>
       <span class="spacer"></span>
+      <button class="btn" @click="openDashboard" :disabled="!!busy">汇总</button>
       <button class="btn" @click="poolVisible = !poolVisible" :disabled="!report">
         {{ poolVisible ? '专注报销单' : '显示发票池' }}
       </button>
@@ -35,6 +37,10 @@
       <button class="btn" @click="openRulesModal" :disabled="!!busy">分类规则</button>
       <button class="btn" @click="exportEvidence" :disabled="!!busy">导出证据包</button>
       <button class="btn primary" @click="openReportModal('create')" :disabled="!!busy">新建报销单</button>
+      <button class="btn" @click="cycleTheme" :title="'外观：' + themeLabel + '（Ctrl+Shift+D 切换）'">
+        外观：{{ themeLabel }}
+      </button>
+      <button class="icon-btn topbar-help" @click="openShortcuts" title="快捷键（F1）">?</button>
     </header>
 
     <main class="layout" :class="{ 'pool-hidden': !poolVisible }">
@@ -47,9 +53,10 @@
             </option>
           </select>
           <input
+            ref="searchInput"
             class="search"
             v-model.trim="filters.search"
-            placeholder="搜索票号 / 销售方 / 购买方 / 项目"
+            placeholder="搜索票号 / 销售方 / 购买方 / 项目（Ctrl+K）"
             @keyup.enter="refreshInvoices(true)"
           >
           <label class="check"><input type="checkbox" v-model="filters.unlinked_only" @change="refreshInvoices(true)">仅未关联</label>
@@ -461,6 +468,131 @@
         <div class="modal-actions">
           <button class="btn" @click="showImportModal = false">取消</button>
           <button class="btn primary" :disabled="!!busy || !importForm.path" @click="submitImport">开始导入</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary dashboard -->
+    <div v-if="showDashboardModal" class="modal-backdrop" @click.self="showDashboardModal = false">
+      <div class="modal dashboard-modal">
+        <div class="dashboard-head">
+          <div>
+            <h2>汇总看板</h2>
+            <p class="muted">与左侧发票池当前筛选同一口径；金额来自本地解析结果。</p>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn ghost" @click="loadDashboard" :disabled="dashboardLoading">刷新</button>
+          <button class="icon-btn" @click="showDashboardModal = false" title="关闭">×</button>
+        </div>
+        <div v-if="dashboardLoading" class="empty">正在汇总…</div>
+        <template v-else-if="dashboard">
+          <div class="dash-hero">
+            <div class="dash-hero-label">发票合计</div>
+            <div class="dash-hero-value">¥{{ dashboard.total }}</div>
+            <div class="muted">
+              {{ dashboard.count }} 张 · 已关联 {{ dashboard.linked_count }} 张
+              <span v-if="dashboard.missing_amount_count">
+                · 缺金额 {{ dashboard.missing_amount_count }} 张不计入合计
+              </span>
+            </div>
+          </div>
+          <div class="dash-tiles">
+            <div class="dash-tile" :class="{ warn: dashboard.review_count }">
+              <span class="dash-tile-label">待确认</span><b>{{ dashboard.review_count }}</b>
+            </div>
+            <div class="dash-tile" :class="{ warn: dashboard.low_confidence_count }">
+              <span class="dash-tile-label">低置信</span><b>{{ dashboard.low_confidence_count }}</b>
+            </div>
+            <div class="dash-tile" :class="{ warn: dashboard.missing_amount_count }">
+              <span class="dash-tile-label">缺金额</span><b>{{ dashboard.missing_amount_count }}</b>
+            </div>
+            <div class="dash-tile" :class="{ warn: dashboard.missing_source_count }">
+              <span class="dash-tile-label">缺源文件</span><b>{{ dashboard.missing_source_count }}</b>
+            </div>
+            <div class="dash-tile">
+              <span class="dash-tile-label">未关联</span>
+              <b>{{ dashboard.count - dashboard.linked_count }}</b>
+            </div>
+            <div class="dash-tile">
+              <span class="dash-tile-label">已修正</span><b>{{ dashboard.edited_count }}</b>
+            </div>
+          </div>
+          <div class="dash-columns">
+            <section>
+              <h3>分类分布</h3>
+              <div v-if="dashboard.categories.length" class="bar-list">
+                <div
+                  v-for="item in dashboard.categories"
+                  :key="item.category"
+                  class="bar-row"
+                  :title="item.category + '：' + item.count + ' 张，¥' + item.total"
+                >
+                  <span class="bar-label" :title="item.category">{{ item.category }}</span>
+                  <span class="bar-track">
+                    <span class="bar-fill" :style="{ width: barPercent(item.total_cents, categoryMax) }"></span>
+                  </span>
+                  <span class="bar-value mono">¥{{ item.total }}</span>
+                </div>
+              </div>
+              <div v-else class="empty">没有分类数据</div>
+            </section>
+            <section>
+              <h3>月度分布</h3>
+              <div v-if="dashboard.months.length" class="bar-list">
+                <div
+                  v-for="item in dashboard.months"
+                  :key="item.month"
+                  class="bar-row"
+                  :title="item.month + '：' + item.count + ' 张，¥' + item.total"
+                >
+                  <span class="bar-label mono" :title="item.month">{{ item.month }}</span>
+                  <span class="bar-track">
+                    <span class="bar-fill" :style="{ width: barPercent(item.total_cents, monthMax) }"></span>
+                  </span>
+                  <span class="bar-value mono">¥{{ item.total }}</span>
+                </div>
+              </div>
+              <div v-else class="empty">没有日期数据</div>
+            </section>
+          </div>
+          <div class="dash-report" v-if="report">
+            <h3>当前报销单</h3>
+            <div class="muted">{{ report.title }} · {{ lines.length }} 行 · 合计 ¥{{ report.amount }}</div>
+            <div v-if="mismatchCount || unlinkedCount" class="warn">
+              <span v-if="mismatchCount">{{ mismatchCount }} 行金额与发票合计不一致</span>
+              <span v-if="unlinkedCount"> · {{ unlinkedCount }} 行有票但未关联</span>
+            </div>
+          </div>
+        </template>
+        <div v-else class="empty">暂无汇总数据</div>
+        <div class="modal-actions">
+          <span class="muted">快捷键 F1 查看帮助</span>
+          <span class="spacer"></span>
+          <button class="btn" @click="showDashboardModal = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Keyboard shortcuts -->
+    <div v-if="showShortcutsModal" class="modal-backdrop" @click.self="showShortcutsModal = false">
+      <div class="modal shortcuts-modal">
+        <h2>快捷键</h2>
+        <table class="shortcut-table">
+          <tbody>
+            <tr><td><kbd>Ctrl</kbd> + <kbd>K</kbd></td><td>定位到发票搜索</td></tr>
+            <tr><td><kbd>Ctrl</kbd> + <kbd>I</kbd></td><td>导入发票</td></tr>
+            <tr><td><kbd>Ctrl</kbd> + <kbd>E</kbd></td><td>导出当前报销单</td></tr>
+            <tr><td><kbd>Ctrl</kbd> + <kbd>B</kbd></td><td>显示 / 隐藏发票池</td></tr>
+            <tr><td><kbd>Ctrl</kbd> + <kbd>D</kbd></td><td>打开汇总看板</td></tr>
+            <tr><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td><td>保存票面修正</td></tr>
+            <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>D</kbd></td><td>切换外观：自动 / 浅色 / 深色</td></tr>
+            <tr><td><kbd>F1</kbd></td><td>打开本帮助</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>关闭弹窗或票面预览</td></tr>
+          </tbody>
+        </table>
+        <p class="muted">外观只影响本机界面，不写入发票数据；自动模式跟随系统设置。</p>
+        <div class="modal-actions">
+          <button class="btn primary" @click="showShortcutsModal = false">知道了</button>
         </div>
       </div>
     </div>

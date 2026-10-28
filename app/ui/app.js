@@ -83,6 +83,11 @@ createApp({
       showRulesModal: false,
       rulesLoading: false,
       categoryRules: [],
+      showDashboardModal: false,
+      dashboardLoading: false,
+      dashboard: null,
+      showShortcutsModal: false,
+      themeMode: 'auto',
       busy: '',
       toast: { message: '', kind: 'info', timer: null },
     };
@@ -131,6 +136,32 @@ createApp({
       const cents = Math.floor((kmHundredths * rateHundredths + 50) / 100);
       return (cents / 100).toFixed(2);
     },
+    modalOpen() {
+      return (
+        this.showReportModal ||
+        this.showMileageModal ||
+        this.showRulesModal ||
+        this.showImportModal ||
+        this.showDashboardModal ||
+        this.showShortcutsModal
+      );
+    },
+    themeLabel() {
+      const labels = (window.invoiceDeskTheme && window.invoiceDeskTheme.labels) || {
+        auto: '自动',
+        light: '浅色',
+        dark: '深色',
+      };
+      return labels[this.themeMode] || '自动';
+    },
+    categoryMax() {
+      const items = this.dashboard ? this.dashboard.categories : [];
+      return Math.max(1, ...items.map((item) => Math.abs(item.total_cents)));
+    },
+    monthMax() {
+      const items = this.dashboard ? this.dashboard.months : [];
+      return Math.max(1, ...items.map((item) => Math.abs(item.total_cents)));
+    },
   },
 
   mounted() {
@@ -140,6 +171,7 @@ createApp({
       window.addEventListener('pywebviewready', () => this.load(), { once: true });
     }
     document.addEventListener('keydown', this.onKeydown);
+    this.syncTheme();
   },
 
   beforeUnmount() {
@@ -184,12 +216,117 @@ createApp({
     },
 
     onKeydown(event) {
-      if (event.key !== 'Escape') return;
-      if (this.showReportModal) this.showReportModal = false;
-      else if (this.showMileageModal) this.showMileageModal = false;
-      else if (this.showRulesModal) this.showRulesModal = false;
-      else if (this.showImportModal) this.showImportModal = false;
-      else if (this.preview) this.closePreview();
+      if (event.key === 'Escape') {
+        if (this.showShortcutsModal) this.showShortcutsModal = false;
+        else if (this.showDashboardModal) this.showDashboardModal = false;
+        else if (this.showReportModal) this.showReportModal = false;
+        else if (this.showMileageModal) this.showMileageModal = false;
+        else if (this.showRulesModal) this.showRulesModal = false;
+        else if (this.showImportModal) this.showImportModal = false;
+        else if (this.preview) this.closePreview();
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      const ctrl = event.ctrlKey || event.metaKey;
+      if (ctrl && event.shiftKey && key === 'd') {
+        event.preventDefault();
+        this.cycleTheme();
+        return;
+      }
+      if (event.key === 'F1') {
+        event.preventDefault();
+        if (!this.modalOpen) this.openShortcuts();
+        return;
+      }
+      if (!ctrl || event.altKey || event.shiftKey) return;
+
+      if (key === 'enter') {
+        if (
+          !this.modalOpen &&
+          this.preview &&
+          this.previewDirty &&
+          !this.previewSaving &&
+          !this.busy
+        ) {
+          event.preventDefault();
+          this.saveInvoiceEdits();
+        }
+        return;
+      }
+      if (this.modalOpen) return;
+      if (key === 'k') {
+        event.preventDefault();
+        this.focusSearch();
+      } else if (key === 'i') {
+        event.preventDefault();
+        if (!this.busy) this.openImportModal();
+      } else if (key === 'e') {
+        event.preventDefault();
+        if (this.report && !this.busy) this.exportReport();
+      } else if (key === 'b') {
+        event.preventDefault();
+        if (this.report) this.poolVisible = !this.poolVisible;
+      } else if (key === 'd') {
+        event.preventDefault();
+        if (!this.busy) this.openDashboard();
+      }
+    },
+
+    /* --------------------------------------------------------- appearance */
+
+    syncTheme() {
+      const theme = window.invoiceDeskTheme;
+      this.themeMode = theme ? theme.get() : 'auto';
+    },
+
+    cycleTheme() {
+      const theme = window.invoiceDeskTheme;
+      if (!theme) {
+        this.notify('当前环境不支持外观切换。', 'error');
+        return;
+      }
+      this.themeMode = theme.cycle();
+      this.notify(`外观已切换为${this.themeLabel}。`, 'info', 2500);
+    },
+
+    openShortcuts() {
+      this.showShortcutsModal = true;
+    },
+
+    focusSearch() {
+      this.poolVisible = true;
+      this.$nextTick(() => {
+        const input = this.$refs.searchInput;
+        if (!input) return;
+        input.focus();
+        input.select();
+      });
+    },
+
+    /* ---------------------------------------------------------- dashboard */
+
+    async openDashboard() {
+      this.showDashboardModal = true;
+      await this.loadDashboard();
+    },
+
+    async loadDashboard() {
+      this.dashboardLoading = true;
+      try {
+        this.dashboard = await this.call('dashboard', this.filterPayload());
+      } catch (error) {
+        this.dashboard = null;
+      } finally {
+        this.dashboardLoading = false;
+      }
+    },
+
+    barPercent(value, max) {
+      const magnitude = Math.abs(Number(value) || 0);
+      const ceiling = Math.abs(Number(max) || 0);
+      if (!magnitude || !ceiling) return '0%';
+      return `${Math.max(2, Math.round((magnitude / ceiling) * 100))}%`;
     },
 
     /* ------------------------------------------------------------- load */
