@@ -10,7 +10,7 @@ from decimal import Decimal
 import fitz
 import pytest
 
-from app.core import db, reports, workbench
+from app.core import db, invoices, reports, workbench
 from app.core.workbench import PreviewError
 from tests.pdf_factory import make_pdf, make_pdf_pages
 from tests.report_factory import add_invoice, add_line, make_db, make_report
@@ -414,6 +414,76 @@ def test_mileage_rounding_matches_whole_cents() -> None:
     assert reports.mileage_cents(Decimal(150)) == 22500
     # The JS preview uses integer hundredths; 3.33 × 1.5 is 5.00, not 4.99.
     assert reports.mileage_cents(Decimal("3.33")) == 500
+
+
+def test_dashboard_summary_groups_counts_and_orders(connection, tmp_path) -> None:
+    existing = tmp_path / "exists.pdf"
+    existing.write_bytes(b"%PDF-1.4")
+    july = add_invoice(
+        connection,
+        index=1,
+        number="D1",
+        date="2026-07-01",
+        category="餐饮费",
+        amount=Decimal("10.00"),
+        source_path=str(existing),
+    )
+    add_invoice(
+        connection,
+        index=2,
+        number="D2",
+        date="2026-07-02",
+        category="餐饮费",
+        amount=Decimal("20.00"),
+        confidence={"amount_total": "low"},
+    )
+    add_invoice(
+        connection,
+        index=3,
+        number="D3",
+        date="2026-08-03",
+        category="交通费",
+        amount=None,
+    )
+    add_invoice(
+        connection,
+        index=4,
+        number="D4",
+        date="",
+        category="",
+        amount=Decimal("5.00"),
+    )
+    report_id = make_report(connection)
+    add_line(connection, report_id, invoice_ids=[july])
+    invoices.update_invoice(connection, july, seller_name="改过的销售方")
+
+    summary = workbench.dashboard_summary(workbench.list_invoices(connection))
+    assert summary.count == 4
+    assert summary.total_cents == 3500
+    assert summary.review_count == 2
+    assert summary.linked_count == 1
+    assert summary.missing_amount_count == 1
+    assert summary.missing_source_count == 3
+    assert summary.low_confidence_count == 1
+    assert summary.edited_count == 1
+    assert [
+        (item.category, item.count, item.total_cents) for item in summary.categories
+    ] == [
+        ("餐饮费", 2, 3000),
+        ("未分类", 1, 500),
+        ("交通费", 1, 0),
+    ]
+    assert [(item.month, item.count, item.total_cents) for item in summary.months] == [
+        ("2026-07", 2, 3000),
+        ("2026-08", 1, 0),
+        ("未知日期", 1, 500),
+    ]
+
+    empty = workbench.dashboard_summary([])
+    assert empty.count == 0
+    assert empty.total_cents == 0
+    assert empty.categories == ()
+    assert empty.months == ()
 
 
 def test_invoice_briefs(connection) -> None:

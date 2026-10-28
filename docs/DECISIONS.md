@@ -81,9 +81,9 @@
 ## ADR-012 工作台前端：本地内置 Vue 单框架，Tabulator/ECharts 延后
 
 - **背景**：Phase 2b 需要桌面工作台；ADR-001 计划 Vue 3 + Tabulator + ECharts，但当前数据量（≤1000 张发票、≤200 行）以筛选、勾选、行内编辑为主，尚无图表。
-- **决定**：pywebview 6 JS bridge + Vue 3.5（`vue.global.prod.js` 本地内置，含 LICENSE，无 Node 构建）；用 Vue 自绘表格；票面用 PyMuPDF 渲染 PNG data URL；`app/api.py` 统一 ok/error 信封、每次调用独立 SQLite 连接并加桥接串行锁；页面 CSP 仅允许本地脚本/样式与 `data:` 预览图，`connect-src 'none'`（Vue 模板编译需要 `unsafe-eval`）；导入暂用粘贴路径（文件对话框要求 GUI 线程）；发票文本只做插值、禁用 v-html/innerHTML，Vue 版本与 sha256 记录在 `app/ui/vendor/SOURCE.txt`。
-- **替代**：Tabulator（额外状态模型，排序/列固定暂不需要）；ECharts（仪表盘未做）；HTML `<input type=file>`（WebView2 不暴露真实路径）；从桥接线程调用 `create_file_dialog`（非 GUI 线程，不安全）。
-- **重新评估**：发票池 >5000 行或需要虚拟滚动/列固定时引入 Tabulator；仪表盘落地时引入 ECharts；pywebview 提供 GUI 线程回调后再做文件夹选择；Vue 改为预编译/运行时构建后可移除 `unsafe-eval`。
+- **决定**：pywebview 6 JS bridge + Vue 3.5（`vue.global.prod.js` 本地内置，含 LICENSE，无 Node 构建）；用 Vue 自绘表格；票面用 PyMuPDF 渲染 PNG data URL；`app/api.py` 统一 ok/error 信封、每次调用独立 SQLite 连接并加桥接串行锁；页面 CSP 仅允许本地脚本/样式与 `data:` 预览图，`connect-src 'none'`（Vue 模板编译需要 `unsafe-eval`）；导入使用 GUI 线程原生文件夹对话框（ADR-016），粘贴路径继续可用；发票文本只做插值、禁用 v-html/innerHTML，Vue 版本与 sha256 记录在 `app/ui/vendor/SOURCE.txt`。
+- **替代**：Tabulator（额外状态模型，排序/列固定暂不需要）；ECharts（看板只用单色 CSS 条形图，见 ADR-017）；HTML `<input type=file>`（WebView2 不暴露真实路径）；从桥接线程调用 `create_file_dialog`（非 GUI 线程，不安全）。
+- **重新评估**：发票池 >5000 行或需要虚拟滚动/列固定时引入 Tabulator；看板需要多序列/交互图表时再引入 ECharts（当前单色 CSS 条形图足够）；pywebview 提供 GUI 线程回调后再做文件夹选择；Vue 改为预编译/运行时构建后可移除 `unsafe-eval`。
 
 ## ADR-013 发票字段人工修正、修正留痕与销售方规则学习
 
@@ -112,3 +112,17 @@
 - **决定**：`Api` 构造时注入 `folder_dialog(current) -> str | None`，API 层不 import pywebview；`app.main.make_folder_dialog` 通过 `window.native.Invoke(System.Action(...))` 把 `window.create_file_dialog(FileDialog.FOLDER, initial)` 排到 GUI 线程，等待 600 秒，取消返回 `None`，异常统一转成可读错误。初始目录优先用当前输入（存在时），否则用用户主目录；`pick_folder` 端点裁剪超长输入，返回 `{"path": ...}`，错误走统一信封并被 `redact_paths` 擦除。导入弹窗新增“浏览…”，粘贴路径继续可用；按钮在选择期间禁用。
 - **替代**：应用内目录浏览器（代码多、交互差）；tkinter 对话框（第二套 GUI 工具包）；HTML `webkitdirectory`（只给文件、拿不到目录路径）；在桥接线程直接调用 `create_file_dialog`（线程限制，已知失败）。
 - **重新评估**：pywebview 提供官方 GUI 线程调度或 JS 对话框后移除 `Invoke` 依赖；需要多选/最近目录记忆时再扩展。
+
+## ADR-017 汇总看板：后端聚合 + 单色 CSS 条形图，不做云端图表
+
+- **背景**：Phase 2b 需要一张能回答“这个月花了多少、花在哪、哪些票还没处理”的看板；当前数据量 ≤1000 张，单一金额序列，ECharts 与本地 HTTP 源都会扩大攻击面与依赖。
+- **决定**：`workbench.dashboard_summary` 对与发票池完全相同筛选条件下的 `InvoiceRow` 做纯 Python 聚合（无新 SQL、无缓存），输出合计、待确认、低置信、缺金额、缺源文件、已修正、未关联、分类分布、月度分布；缺金额的票计入张数但不计入金额，分类/月度保留零金额行；无日期归入“未知日期”并排在最后；分类按金额降序、同名按张数；`Api.dashboard` 复用 `_invoice_filters`，无效日期或倒序区间走统一信封。界面为弹窗：一个主数字、KPI 磁贴、分类/月度单色横向条形图；条宽按绝对值归一（负数仍显示带符号金额），每行直接标注金额与张数，`title` 提供悬停信息；金额列表本身可当表格读，不引入图例/双轴；额度提示需要月度收入录入，归入 Phase 4。
+- **替代**：前端从已加载行聚合（无法单测、与后端口径易漂移）；ECharts（单序列收益低，违反本地 CSP 精简原则）；把额度提示塞进看板（必须先录收入，增加报账步骤）。
+- **重新评估**：出现多序列/交互图表需求或发票池 >5000 行时引入图表库与虚拟滚动；有收入录入后把费用额度占比接到同一看板。
+
+## ADR-018 外观与快捷键：data-theme 先行 + 最大窗口，按本机 DPI 兜底
+
+- **背景**：需要手动深色开关与常用操作快捷键；本机 1280×720 逻辑屏、150% DPI 下，固定 1440×900 窗口被 Windows 钳制，而 WebView2 仍按较大视口排版，右侧工具栏被裁切。
+- **决定**：新增 `theme.js`，在样式表之前同步解析 auto/light/dark，把结果写到 `<html data-theme>`；auto 监听 `prefers-color-scheme`；手动模式尽力写入 `localStorage`（`private_mode` 可能清空，故不承诺跨启动持久化），存储异常不影响会话内切换；CSS 只有 `:root[data-theme="dark"]` 一套深色 token，不再重复媒体查询。快捷键挂在 document：Esc 关闭最上层弹窗/票面；Ctrl+K 聚焦搜索、Ctrl+I 导入、Ctrl+E 导出、Ctrl+B 显示/隐藏发票池、Ctrl+D 汇总看板、Ctrl+Enter 保存票面修正、Ctrl+Shift+D 循环外观、F1 帮助；弹窗打开时动作快捷键不触发，Esc 与外观仍可用，F1 只在无弹窗时打开帮助。主窗口改为 `maximized=True`（默认 1200×800，最小 1024×640），由系统工作区决定实际尺寸，避免 WebView 视口大于窗口。
+- **替代**：把外观存进数据库设置表（为单个 UI 偏好加 schema 迁移）；仅跟随系统（不满足手动开关）；保留固定窗口（小屏裁切工具栏）；给快捷键做全局注册（WebView2 无此需求）。
+- **重新评估**：用户要求外观跨启动保留时增加 settings 表；pywebview 修复 Windows DPI/窗口尺寸映射后可去掉最大化兜底；快捷键与输入法/浏览器冲突时再调整组合。

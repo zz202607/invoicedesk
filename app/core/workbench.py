@@ -87,6 +87,34 @@ class InvoiceSummary:
     total_cents: int
 
 
+@dataclass(frozen=True)
+class CategorySummary:
+    category: str
+    count: int
+    total_cents: int
+
+
+@dataclass(frozen=True)
+class MonthSummary:
+    month: str
+    count: int
+    total_cents: int
+
+
+@dataclass(frozen=True)
+class DashboardSummary:
+    count: int
+    total_cents: int
+    review_count: int
+    linked_count: int
+    missing_amount_count: int
+    missing_source_count: int
+    low_confidence_count: int
+    edited_count: int
+    categories: tuple[CategorySummary, ...]
+    months: tuple[MonthSummary, ...]
+
+
 def _like_pattern(term: str) -> str:
     """Escape LIKE metacharacters so a ``%`` in a search is literal."""
     cleaned = normalize(term).strip()
@@ -240,6 +268,72 @@ def summarize_invoices(rows: list[InvoiceRow]) -> InvoiceSummary:
         linked_count=sum(1 for row in rows if row.is_linked),
         missing_amount_count=sum(1 for row in rows if row.amount_total_cents is None),
         total_cents=sum(row.amount_total_cents or 0 for row in rows),
+    )
+
+
+UNKNOWN_CATEGORY = "未分类"
+UNKNOWN_MONTH = "未知日期"
+
+
+def _invoice_month(value: str) -> str:
+    """Return ``YYYY-MM`` for a stored ISO date, else the unknown bucket."""
+    if (
+        len(value) >= 7
+        and value[4] == "-"
+        and value[:4].isdigit()
+        and value[5:7].isdigit()
+    ):
+        return value[:7]
+    return UNKNOWN_MONTH
+
+
+def dashboard_summary(rows: list[InvoiceRow]) -> DashboardSummary:
+    """Aggregate the current invoice-pool rows for the summary dashboard.
+
+    Missing amounts are counted but excluded from money totals, matching the
+    invoice pool summary. Categories and months keep zero-amount rows so a
+    count is never hidden by a missing amount.
+    """
+    summary = summarize_invoices(rows)
+    category_groups: dict[str, list[int]] = {}
+    month_groups: dict[str, list[int]] = {}
+    for row in rows:
+        category = row.category or UNKNOWN_CATEGORY
+        bucket = category_groups.setdefault(category, [0, 0])
+        bucket[0] += 1
+        bucket[1] += row.amount_total_cents or 0
+        month = _invoice_month(row.invoice_date)
+        bucket = month_groups.setdefault(month, [0, 0])
+        bucket[0] += 1
+        bucket[1] += row.amount_total_cents or 0
+
+    categories = tuple(
+        sorted(
+            (
+                CategorySummary(category=name, count=count, total_cents=total)
+                for name, (count, total) in category_groups.items()
+            ),
+            key=lambda item: (-item.total_cents, -item.count, item.category),
+        )
+    )
+    months = tuple(
+        MonthSummary(month=name, count=count, total_cents=total)
+        for name, (count, total) in sorted(
+            month_groups.items(),
+            key=lambda item: (item[0] == UNKNOWN_MONTH, item[0]),
+        )
+    )
+    return DashboardSummary(
+        count=summary.count,
+        total_cents=summary.total_cents,
+        review_count=summary.review_count,
+        linked_count=summary.linked_count,
+        missing_amount_count=summary.missing_amount_count,
+        missing_source_count=sum(1 for row in rows if not row.source_exists),
+        low_confidence_count=sum(1 for row in rows if row.confidence_notes),
+        edited_count=sum(1 for row in rows if row.edit_count),
+        categories=categories,
+        months=months,
     )
 
 

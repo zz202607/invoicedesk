@@ -63,7 +63,8 @@ def test_main_wires_the_window_without_starting_a_real_gui() -> None:
     assert url.endswith("/ui/index.html")
     assert Path(url.removeprefix("file://")).name == "index.html"
     assert isinstance(fake.window_kwargs["js_api"], Api)
-    assert fake.window_kwargs["min_size"] == (1080, 700)
+    assert fake.window_kwargs["min_size"] == (1024, 640)
+    assert fake.window_kwargs["maximized"] is True
     assert fake.start_kwargs["private_mode"] is True
     assert fake.start_kwargs["debug"] is False
 

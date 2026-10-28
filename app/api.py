@@ -265,11 +265,16 @@ def _line_dict(
     }
 
 
-def _export_filters(payload: dict[str, Any]) -> ExportFilters:
+def _date_range(payload: dict[str, Any]) -> tuple[str, str]:
     date_from = _iso_date(payload.get("date_from"), "开始日期")
     date_to = _iso_date(payload.get("date_to"), "结束日期")
     if date_from and date_to and date_from > date_to:
         raise ReportError("开始日期不能晚于结束日期")
+    return date_from, date_to
+
+
+def _export_filters(payload: dict[str, Any]) -> ExportFilters:
+    date_from, date_to = _date_range(payload)
     return ExportFilters(
         batch_id=_batch_id(payload.get("batch_id")),
         buyer=str(payload.get("buyer") or "").strip(),
@@ -277,6 +282,19 @@ def _export_filters(payload: dict[str, Any]) -> ExportFilters:
         date_to=date_to,
         include_review=bool(payload.get("include_review", True)),
     )
+
+
+def _invoice_filters(payload: dict[str, Any]) -> dict[str, Any]:
+    date_from, date_to = _date_range(payload)
+    return {
+        "batch_id": _batch_id(payload.get("batch_id")),
+        "buyer": str(payload.get("buyer") or "").strip(),
+        "date_from": date_from,
+        "date_to": date_to,
+        "include_review": bool(payload.get("include_review", True)),
+        "unlinked_only": bool(payload.get("unlinked_only", False)),
+        "search": str(payload.get("search") or "").strip(),
+    }
 
 
 def _endpoint(method):
@@ -386,21 +404,9 @@ class Api:
 
     @_endpoint
     def list_invoices(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
-        payload = filters or {}
-        date_from = _iso_date(payload.get("date_from"), "开始日期")
-        date_to = _iso_date(payload.get("date_to"), "结束日期")
-        if date_from and date_to and date_from > date_to:
-            raise ReportError("开始日期不能晚于结束日期")
         with contextlib.closing(self._connect()) as connection:
             rows = workbench.list_invoices(
-                connection,
-                batch_id=_batch_id(payload.get("batch_id")),
-                buyer=str(payload.get("buyer") or "").strip(),
-                date_from=date_from,
-                date_to=date_to,
-                include_review=bool(payload.get("include_review", True)),
-                unlinked_only=bool(payload.get("unlinked_only", False)),
-                search=str(payload.get("search") or "").strip(),
+                connection, **_invoice_filters(filters or {})
             )
             summary = workbench.summarize_invoices(rows)
         return {
@@ -413,6 +419,44 @@ class Api:
                 "total_cents": summary.total_cents,
                 "total": _money(summary.total_cents),
             },
+        }
+
+    @_endpoint
+    def dashboard(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Aggregate the invoice pool for the summary dashboard."""
+        with contextlib.closing(self._connect()) as connection:
+            rows = workbench.list_invoices(
+                connection, **_invoice_filters(filters or {})
+            )
+            summary = workbench.dashboard_summary(rows)
+        return {
+            "count": summary.count,
+            "total_cents": summary.total_cents,
+            "total": _money(summary.total_cents),
+            "review_count": summary.review_count,
+            "linked_count": summary.linked_count,
+            "missing_amount_count": summary.missing_amount_count,
+            "missing_source_count": summary.missing_source_count,
+            "low_confidence_count": summary.low_confidence_count,
+            "edited_count": summary.edited_count,
+            "categories": [
+                {
+                    "category": item.category,
+                    "count": item.count,
+                    "total_cents": item.total_cents,
+                    "total": _money(item.total_cents),
+                }
+                for item in summary.categories
+            ],
+            "months": [
+                {
+                    "month": item.month,
+                    "count": item.count,
+                    "total_cents": item.total_cents,
+                    "total": _money(item.total_cents),
+                }
+                for item in summary.months
+            ],
         }
 
     @_endpoint
