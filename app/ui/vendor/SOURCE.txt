@@ -1,0 +1,6 @@
+Vue 3.5.44 — dist/vue.global.prod.js
+Source: npm package vue@3.5.44 (https://www.npmjs.com/package/vue/v/3.5.44)
+Downloaded: 2026-10-28
+sha256: e0a2a0866a8de8887542e24f3c218aad3d907b88f30966068792ba992296dc9f
+License: MIT — see LICENSE.vue
+Vendored for offline use; no Node build step at runtime.

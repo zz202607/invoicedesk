@@ -1,0 +1,72 @@
+name: AI Code Review
+
+# Reviews pull requests with a DeepSeek multi-agent pipeline (tools/ai_reviewer.py).
+# Bootstrap order matters: this workflow and the script must be on the default
+# branch before pull_request events can run it.
+#
+# Required repository setup:
+#   - Secret  DEEPSEEK_API_KEY
+#   - Optional variable DEEPSEEK_MODEL (default: deepseek-flash)
+#   - Optional variable REVIEW_AGENTS (default: correctness,security,tests)
+#
+# Security: checkout the PR's *base* commit, not its head, so a pull request
+# cannot modify the reviewer that runs with the DeepSeek secret. The script only
+# reads the diff through the GitHub API. Fork PRs are skipped.
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+    paths:
+      - "app/**"
+      - "tests/**"
+      - "tools/**"
+      - "pyproject.toml"
+      - "requirements*.txt"
+      - ".github/workflows/ai-review.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout trusted base
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r tools/requirements.txt
+
+      - name: Test reviewer
+        run: python -m pytest -q tools/tests/test_ai_reviewer.py
+
+      - name: Run DeepSeek review
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_MODEL: ${{ vars.DEEPSEEK_MODEL || 'deepseek-flash' }}
+          REVIEW_AGENTS: ${{ vars.REVIEW_AGENTS || 'correctness,security,tests' }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python tools/ai_reviewer.py

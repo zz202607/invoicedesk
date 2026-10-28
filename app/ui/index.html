@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<title>发票管家</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app" v-cloak>
+  <div v-if="loading" class="splash">
+    <div class="spinner"></div>
+    <div>正在打开发票库…</div>
+  </div>
+
+  <div v-else-if="fatal" class="splash fatal">
+    <div class="fatal-title">无法打开发票库</div>
+    <p>{{ fatal }}</p>
+    <button class="btn primary" @click="load">重试</button>
+  </div>
+
+  <template v-else>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">票</span>
+        <span class="brand-name">发票管家</span>
+        <span class="version">v{{ boot.version }}</span>
+      </div>
+      <span class="spacer"></span>
+      <button class="btn" @click="poolVisible = !poolVisible" :disabled="!report">
+        {{ poolVisible ? '专注报销单' : '显示发票池' }}
+      </button>
+      <button class="btn" @click="openImportModal" :disabled="!!busy">导入发票</button>
+      <button class="btn" @click="openRulesModal" :disabled="!!busy">分类规则</button>
+      <button class="btn" @click="exportEvidence" :disabled="!!busy">导出证据包</button>
+      <button class="btn primary" @click="openReportModal('create')" :disabled="!!busy">新建报销单</button>
+    </header>
+
+    <main class="layout" :class="{ 'pool-hidden': !poolVisible }">
+      <section class="panel pool" v-show="poolVisible">
+        <div class="toolbar">
+          <select v-model="filters.batch_id" @change="refreshInvoices(true)" title="按导入批次筛选">
+            <option value="">全部批次</option>
+            <option v-for="batch in boot.batches" :key="batch.id" :value="batch.id">
+              #{{ batch.id }} {{ batch.label || '未命名批次' }}（{{ batch.invoice_count }} 张）
+            </option>
+          </select>
+          <input
+            class="search"
+            v-model.trim="filters.search"
+            placeholder="搜索票号 / 销售方 / 购买方 / 项目"
+            @keyup.enter="refreshInvoices(true)"
+          >
+          <label class="check"><input type="checkbox" v-model="filters.unlinked_only" @change="refreshInvoices(true)">仅未关联</label>
+          <label class="check"><input type="checkbox" v-model="filters.include_review" @change="refreshInvoices(true)">含待确认</label>
+          <input type="date" v-model="filters.date_from" @change="refreshInvoices(true)" title="开票日期起">
+          <input type="date" v-model="filters.date_to" @change="refreshInvoices(true)" title="开票日期止">
+          <button class="btn ghost" @click="refreshInvoices(false)" :disabled="invoicesLoading">刷新</button>
+        </div>
+
+        <div class="summary-bar">
+          <span><b>{{ invoiceSummary.count }}</b> 张发票</span>
+          <span title="缺失金额的发票不计入合计">合计 <b>¥{{ invoiceSummary.total }}</b></span>
+          <span v-if="invoiceSummary.review_count" class="warn">待确认 {{ invoiceSummary.review_count }}</span>
+          <span v-if="invoiceSummary.linked_count">已关联 {{ invoiceSummary.linked_count }}</span>
+          <span v-if="invoiceSummary.missing_amount_count" class="warn">缺金额 {{ invoiceSummary.missing_amount_count }}</span>
+          <span class="spacer"></span>
+          <span class="muted">已选 {{ selected.length }} 张</span>
+        </div>
+
+        <div class="table-wrap">
+          <table class="data-table invoice-table">
+            <thead>
+              <tr>
+                <th class="col-check">
+                  <input type="checkbox" :checked="allVisibleSelected" @change="toggleSelectAll" title="全选当前列表">
+                </th>
+                <th>日期</th>
+                <th>票号</th>
+                <th>销售方</th>
+                <th class="num">金额</th>
+                <th>分类</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="row in invoices"
+                :key="row.id"
+                :class="{ review: row.needs_review, active: preview && preview.invoice.id === row.id }"
+                @click="openPreview(row)"
+              >
+                <td class="col-check" @click.stop>
+                  <input type="checkbox" :value="row.id" v-model="selected">
+                </td>
+                <td class="mono">{{ row.invoice_date || '—' }}</td>
+                <td class="mono ellipsis" :title="row.invoice_number">
+                  {{ row.invoice_number || '（无票号）' }}
+                  <span v-if="!row.source_exists" class="missing" title="源文件不存在">!</span>
+                </td>
+                <td class="ellipsis" :title="row.seller_name">{{ row.seller_name || '—' }}</td>
+                <td class="num mono">{{ row.amount ? '¥' + row.amount : '缺失' }}</td>
+                <td><span class="tag">{{ row.category }}</span></td>
+                <td class="status-cell">
+                  <span v-if="row.needs_review" class="badge warn">待确认</span>
+                  <span v-if="row.edit_count" class="badge soft" :title="'人工修正 ' + row.edit_count + ' 项'">已修正</span>
+                  <span v-if="row.category_rule === 'learned.seller'" class="badge soft" title="分类来自已学习的销售方规则">规则分类</span>
+                  <span v-if="row.linked" class="badge linked" :title="row.links.map(l => '#' + l.report_id + ' ' + l.month).join('，')">已关联</span>
+                  <span v-if="row.confidence_notes" class="badge soft" :title="row.confidence_notes">低置信</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="!invoices.length && !invoicesLoading" class="empty">没有匹配的发票</div>
+          <div v-if="invoicesLoading" class="empty">正在加载…</div>
+        </div>
+
+        <div class="pool-actions">
+          <input v-model.trim="quickProject" class="project-input" placeholder="生成行的项目名称（可选）">
+          <button
+            class="btn primary"
+            :disabled="!currentReportId || !selected.length || !!busy"
+            @click="addSelectedInvoices"
+          >从所选生成报销行（{{ selected.length }}）</button>
+          <button
+            class="btn"
+            :disabled="!activeLine || !selected.length || !!busy"
+            @click="linkToActiveLine"
+          >关联到第 {{ activeLine ? activeLine.sequence : '—' }} 行</button>
+        </div>
+      </section>
+
+      <section class="panel report">
+        <div class="report-head">
+          <select v-model="currentReportId" @change="loadReport" title="切换报销单">
+            <option disabled value="">选择报销单</option>
+            <option v-for="item in reports" :key="item.id" :value="item.id">
+              #{{ item.id }} · {{ item.month }} · {{ item.company }} / {{ item.reporter }}
+            </option>
+          </select>
+          <button class="btn ghost" :disabled="!report" @click="openReportModal('edit')">编辑表头</button>
+          <span class="spacer"></span>
+          <template v-if="report">
+            <span class="total" title="按报销行金额整数分合计">合计 <b>¥{{ report.amount }}</b></span>
+            <select v-model="layout" title="导出模板">
+              <option v-for="item in boot.layouts" :key="item.key" :value="item.key">{{ item.label }}</option>
+            </select>
+            <button class="btn primary" :disabled="!!busy" @click="exportReport">导出报销单</button>
+          </template>
+        </div>
+
+        <div v-if="!report" class="empty report-empty">
+          <div>还没有选中报销单</div>
+          <button class="btn primary" @click="openReportModal('create')">新建报销单</button>
+        </div>
+
+        <template v-else>
+          <div class="report-meta">
+            <div class="report-title">{{ report.title }}</div>
+            <div class="muted">
+              {{ report.company }} · {{ report.department || '未填部门' }} · {{ report.reporter }} · {{ report.month }}
+              <span v-if="report.note"> · {{ report.note }}</span>
+            </div>
+            <div class="report-stats">
+              <span>{{ lines.length }} 行</span>
+              <span v-if="mismatchCount" class="warn">{{ mismatchCount }} 行金额与发票合计不一致</span>
+              <span v-if="unlinkedCount" class="warn">{{ unlinkedCount }} 行标记有票但未关联</span>
+            </div>
+          </div>
+
+          <div class="table-wrap lines-wrap">
+            <table class="data-table line-table">
+              <thead>
+                <tr>
+                  <th class="col-seq">#</th>
+                  <th class="col-date">日期</th>
+                  <th class="col-category">费用名称</th>
+                  <th class="col-amount">金额</th>
+                  <th class="col-invoice">有票 / 附注</th>
+                  <th class="col-project">项目名称</th>
+                  <th class="col-note">备注（报销费用说明）</th>
+                  <th class="col-links">关联发票</th>
+                  <th class="col-ops"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="line in lines"
+                  :key="line.id"
+                  :class="{ active: activeSequence === line.sequence, mismatch: line.amount_mismatch }"
+                  @click="activeSequence = line.sequence"
+                >
+                  <td class="col-seq num">{{ line.sequence }}</td>
+                  <td><input type="date" v-model="line.line_date" @change="saveLine(line)"></td>
+                  <td><input v-model="line.category" list="category-options" @change="saveLine(line)"></td>
+                  <td><input class="num-input" inputmode="decimal" v-model="line.amount" @change="saveLine(line)"></td>
+                  <td class="invoice-cell">
+                    <label class="check"><input type="checkbox" v-model="line.has_invoice" @change="saveLine(line)">有票</label>
+                    <input class="note-input" v-model="line.invoice_note" placeholder="附注" @change="saveLine(line)">
+                  </td>
+                  <td><input v-model="line.project_name" @change="saveLine(line)"></td>
+                  <td><input v-model="line.description" @change="saveLine(line)"></td>
+                  <td>
+                    <span v-if="line.invoices.length" class="chips">
+                      <span
+                        v-for="inv in line.invoices"
+                        :key="inv.id"
+                        class="chip"
+                        :title="inv.invoice_number + ' · ' + (inv.amount ? '¥' + inv.amount : '缺金额')"
+                      >
+                        #{{ inv.id }} ¥{{ inv.amount || '?' }}
+                        <button class="chip-x" @click.stop="unlinkInvoice(line, inv.id)" title="取消关联">×</button>
+                      </span>
+                    </span>
+                    <span v-else class="muted">—</span>
+                  </td>
+                  <td class="col-ops">
+                    <button class="icon-btn danger-text" @click.stop="removeLine(line)" title="删除本行">删除</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div v-if="!lines.length" class="empty">这张报销单还没有行。勾选左侧发票生成，或新增手动行。</div>
+          </div>
+
+          <div class="line-actions">
+            <button class="btn" @click="addBlankLine" :disabled="!!busy">+ 新增行</button>
+            <button class="btn" @click="openMileageModal" :disabled="!!busy">+ 里程行</button>
+            <span v-if="activeLine" class="hint">当前行 #{{ activeLine.sequence }} · {{ activeLine.category }}</span>
+            <span class="spacer"></span>
+            <span v-if="report.note" class="muted">{{ report.note }}</span>
+          </div>
+        </template>
+      </section>
+    </main>
+
+    <aside class="preview-drawer" v-if="preview">
+      <div class="preview-head">
+        <div>
+          <div class="preview-title">发票 #{{ preview.invoice.id }}</div>
+          <div class="muted">{{ preview.invoice.type_label }} · {{ preview.pageLabel }}</div>
+        </div>
+        <span class="spacer"></span>
+        <button class="icon-btn" @click="changeZoom(-0.25)" title="缩小">－</button>
+        <button class="icon-btn" @click="changeZoom(0.25)" title="放大">＋</button>
+        <button class="icon-btn" @click="closePreview" title="关闭">×</button>
+      </div>
+      <div class="preview-fields" v-if="previewForm">
+        <div>
+          <span class="label">票号</span>
+          <input class="mono" v-model="previewForm.invoice_number">
+        </div>
+        <div>
+          <span class="label">日期</span>
+          <input type="date" v-model="previewForm.invoice_date">
+        </div>
+        <div class="wide">
+          <span class="label">销售方</span>
+          <input v-model="previewForm.seller_name">
+        </div>
+        <div class="wide">
+          <span class="label">购买方</span>
+          <input v-model="previewForm.buyer_name">
+        </div>
+        <div>
+          <span class="label">金额</span>
+          <input class="mono" inputmode="decimal" v-model="previewForm.amount">
+        </div>
+        <div>
+          <span class="label">分类</span>
+          <input list="category-options" v-model="previewForm.category">
+        </div>
+        <div class="wide">
+          <span class="label">项目</span>
+          <input v-model="previewForm.item_summary">
+        </div>
+        <div class="wide muted">
+          票型 {{ preview.invoice.type_label }} · 来源 {{ preview.invoice.source_name }} ·
+          第 {{ preview.pageLabel }} 页 · {{ preview.invoice.batch_label }}
+        </div>
+        <div v-if="preview.invoice.category_rule === 'learned.seller'" class="wide">
+          <span class="badge soft">规则分类</span>
+          <span class="muted">分类由销售方规则自动套用；修正后会更新该规则。</span>
+        </div>
+        <div v-if="preview.invoice.confidence_notes" class="wide warn">低置信字段：{{ preview.invoice.confidence_notes }}</div>
+        <div v-if="preview.invoice.warning_text" class="wide warn">识别警告：{{ preview.invoice.warning_text }}</div>
+      </div>
+      <div class="preview-save">
+        <button
+          class="btn primary"
+          :disabled="!previewDirty || previewSaving || !!busy"
+          @click="saveInvoiceEdits"
+        >保存修正</button>
+        <button
+          v-if="preview.invoice.needs_review"
+          class="btn"
+          :disabled="previewDirty || previewSaving || !!busy"
+          title="确认已人工核对；识别警告与低置信记录仍会保留"
+          @click="confirmInvoice"
+        >确认无误</button>
+        <span v-if="previewDirty" class="warn">未保存</span>
+        <span class="spacer"></span>
+        <span class="muted">只改本地数据，不动源文件</span>
+      </div>
+      <div class="edit-history" v-if="invoiceEdits.length">
+        <div class="history-title">修正记录</div>
+        <div class="history-row" v-for="edit in invoiceEdits" :key="edit.id">
+          <span class="muted mono">{{ formatTime(edit.edited_at) }}</span>
+          <span class="history-field">{{ fieldLabels[edit.field] || edit.field }}</span>
+          <span
+            class="history-change ellipsis"
+            :title="(edit.old_value || '空') + ' → ' + (edit.new_value || '空')"
+          >{{ edit.old_value || '空' }} → {{ edit.new_value || '空' }}</span>
+        </div>
+      </div>
+      <div class="preview-actions">
+        <button
+          class="btn primary"
+          :disabled="!activeLine || !currentReportId || !!busy"
+          @click="linkPreviewToActiveLine"
+        >关联到第 {{ activeLine ? activeLine.sequence : '—' }} 行</button>
+        <button
+          class="btn"
+          :disabled="!currentReportId || !!busy"
+          @click="addPreviewInvoice"
+        >生成新报销行</button>
+      </div>
+      <div class="preview-image">
+        <div v-if="preview.loading" class="empty">正在渲染票面…</div>
+        <div v-else-if="preview.error" class="empty warn">{{ preview.error }}</div>
+        <img v-else :src="preview.data_url" alt="发票票面">
+      </div>
+    </aside>
+
+    <div v-if="busy" class="busy-overlay">
+      <div class="spinner"></div>
+      <div>{{ busy }}</div>
+    </div>
+
+    <div v-if="toast.message" class="toast" :class="toast.kind">{{ toast.message }}</div>
+
+    <!-- Report header modal -->
+    <div v-if="showReportModal" class="modal-backdrop" @click.self="showReportModal = false">
+      <div class="modal">
+        <h2>{{ reportModalMode === 'create' ? '新建报销单' : '编辑表头' }}</h2>
+        <div class="form-grid">
+          <label>公司 *<input v-model.trim="reportForm.company" placeholder="如：示例甲"></label>
+          <label>报销人 *<input v-model.trim="reportForm.reporter" placeholder="姓名"></label>
+          <label>月份 *<input type="month" v-model="reportForm.month"></label>
+          <label>部门<input v-model.trim="reportForm.department" placeholder="可选"></label>
+          <label class="wide">标题<input v-model.trim="reportForm.title" placeholder="留空则自动生成"></label>
+          <label class="wide">备注<input v-model.trim="reportForm.note" placeholder="可选"></label>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" @click="showReportModal = false">取消</button>
+          <button class="btn primary" :disabled="!!busy" @click="submitReport">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mileage modal -->
+    <div v-if="showMileageModal" class="modal-backdrop" @click.self="showMileageModal = false">
+      <div class="modal">
+        <h2>新增里程行</h2>
+        <div class="form-grid">
+          <label>日期 *<input type="date" v-model="mileageForm.line_date"></label>
+          <label>里程（km）*<input v-model.trim="mileageForm.km" inputmode="decimal" placeholder="如 12.4"></label>
+          <label class="wide">说明<input v-model.trim="mileageForm.description" placeholder="拜访客户 / 项目现场"></label>
+          <label>费用名称<input v-model.trim="mileageForm.category"></label>
+          <label>项目名称<input v-model.trim="mileageForm.project_name"></label>
+          <div class="wide mileage-preview">
+            计算：{{ mileageForm.km || '0' }} km × {{ boot.mileage_rate }} 元/km =
+            <b>¥{{ mileageAmount }}</b>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" @click="showMileageModal = false">取消</button>
+          <button class="btn primary" :disabled="!!busy" @click="submitMileage">添加</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Category rules modal -->
+    <div v-if="showRulesModal" class="modal-backdrop" @click.self="showRulesModal = false">
+      <div class="modal rules-modal">
+        <h2>分类规则</h2>
+        <p class="muted">
+          修正发票分类时会自动记住销售方规则，新导入的发票优先按规则分类。
+          停用后不再影响新导入；应用到历史只改本地分类并逐张留痕，不动源文件。
+        </p>
+        <div v-if="rulesLoading" class="empty">正在加载规则…</div>
+        <div v-else-if="!categoryRules.length" class="empty">
+          还没有规则。在发票修正里改一次分类，就会记住这个销售方。
+        </div>
+        <table v-else class="data-table rule-table">
+          <thead>
+            <tr>
+              <th>销售方</th>
+              <th>分类</th>
+              <th class="num">确认</th>
+              <th class="num">命中</th>
+              <th class="num">库内</th>
+              <th>状态</th>
+              <th class="rule-ops-head"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="rule in categoryRules" :key="rule.id" :class="{ 'rule-off': !rule.enabled }">
+              <td class="ellipsis" :title="displayText(rule.pattern, 120)">
+                {{ displayText(rule.pattern, 64) }}
+              </td>
+              <td><span class="tag">{{ displayText(rule.category, 24) }}</span></td>
+              <td class="num">{{ rule.confirm_count }}</td>
+              <td class="num">{{ rule.hit_count }}</td>
+              <td class="num">{{ rule.invoice_count }}</td>
+              <td>
+                <span v-if="rule.enabled" class="badge linked">启用</span>
+                <span v-else class="badge soft">停用</span>
+              </td>
+              <td class="rule-ops">
+                <button class="icon-btn" :disabled="!!busy" @click="toggleRule(rule)">
+                  {{ rule.enabled ? '停用' : '启用' }}
+                </button>
+                <button
+                  class="icon-btn"
+                  :disabled="!!busy || !rule.enabled || !rule.invoice_count"
+                  :title="rule.enabled ? '把该分类应用到同销售方的历史发票（先预览）' : '先启用规则才能回溯'"
+                  @click="backfillRule(rule)"
+                >应用到历史</button>
+                <button class="icon-btn danger-text" :disabled="!!busy" @click="deleteRule(rule)">删除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="modal-actions">
+          <button class="btn" @click="showRulesModal = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import modal -->
+    <div v-if="showImportModal" class="modal-backdrop" @click.self="showImportModal = false">
+      <div class="modal">
+        <h2>导入发票</h2>
+        <p class="muted">
+          选择包含 PDF 发票的文件夹。已导入的文件会按内容自动跳过，源文件不会被修改。<br>
+          也可以直接粘贴路径：在资源管理器里选中文件夹，按 Shift + 右键 →「复制为路径」。
+        </p>
+        <div class="form-grid">
+          <label class="wide">文件夹路径 *
+            <div class="folder-input">
+              <input v-model.trim="importForm.path" placeholder="D:\发票\2026-07">
+              <button class="btn" type="button" :disabled="pickingFolder" @click="pickFolder">
+                {{ pickingFolder ? '选择中…' : '浏览…' }}
+              </button>
+            </div>
+          </label>
+          <label class="wide">批次名称<input v-model.trim="importForm.label" placeholder="可选，默认用文件夹名"></label>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" @click="showImportModal = false">取消</button>
+          <button class="btn primary" :disabled="!!busy || !importForm.path" @click="submitImport">开始导入</button>
+        </div>
+      </div>
+    </div>
+
+    <datalist id="category-options">
+      <option v-for="name in boot.categories" :key="name" :value="name"></option>
+    </datalist>
+  </template>
+</div>
+
+<script src="vendor/vue.global.prod.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

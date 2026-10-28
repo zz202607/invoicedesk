@@ -1,0 +1,81 @@
+"""Reimbursement category rules.
+
+The default taxonomy follows 票据分类.doc. Materials stay in 其他费用 because
+that is what the existing reimbursement sheets use.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+DEFAULT_CATEGORY = "其他费用"
+
+# The nine categories used by the reimbursement sheets, in the order they
+# appear in 票据分类.doc. The UI offers these as suggestions; custom values
+# typed by the user are still accepted.
+CATEGORIES: tuple[str, ...] = (
+    "汽车费用",
+    "差旅费",
+    "餐饮费",
+    "办公费用",
+    "广告费用",
+    "培训费",
+    "福利费",
+    "业务招待费",
+    "其他费用",
+)
+
+SELLER_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("汽车费用", "seller.fuel", ("中国石油", "中国石化", "壳牌", "加油站")),
+    ("汽车费用", "seller.toll", ("高速公路", "交通投资", "路桥")),
+    ("差旅费", "seller.hotel", ("酒店", "旅馆", "宾馆")),
+    ("餐饮费", "seller.restaurant", ("餐饮", "餐馆", "饭店", "酒楼", "火锅")),
+    ("差旅费", "seller.rail", ("铁路", "航空", "机场")),
+    ("办公费用", "seller.courier", ("顺丰", "快递", "邮政")),
+)
+
+ITEM_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("差旅费", "item.travel", ("住宿", "旅客运输", "客运服务", "铁路", "火车", "机票", "行程单", "打车", "网约车", "代订车", "代驾")),
+    ("餐饮费", "item.meal", ("餐饮", "餐费", "餐馆", "饭店", "酒楼", "火锅")),
+    ("汽车费用", "item.vehicle", ("汽油", "柴油", "加油", "充电", "停车", "通行费", "过路费", "过桥费", "ETC", "洗车", "轮胎", "维修")),
+    ("办公费用", "item.office", ("办公", "文具", "打印", "纸张", "快递", "桶装水", "网络", "电信", "通信费", "中国移动", "移动通信", "中国联通", "中国电信", "U盘", "存储", "数据线", "电脑", "手机")),
+    ("广告费用", "item.ad", ("广告", "宣传", "会务", "标签", "瓶身", "设计")),
+    ("培训费", "item.training", ("培训", "学费", "教育", "考试")),
+    ("福利费", "item.welfare", ("粮油", "大米", "面粉", "食用油", "服装", "鞋帽", "药品", "超市")),
+    ("业务招待费", "item.entertainment", ("烟", "酒", "茶叶", "礼品", "娱乐", "旅游")),
+    ("其他费用", "item.materials", ("硅藻土", "滤膜", "滤袋", "吨桶", "搅拌桶", "泵", "热缩膜", "打包带", "五金", "配件", "设备", "材料")),
+)
+
+
+@dataclass(frozen=True)
+class CategoryResult:
+    category: str
+    rule: str
+
+
+def _match(rules: tuple[tuple[str, str, tuple[str, ...]], ...], text: str) -> CategoryResult | None:
+    lowered = text.lower()
+    for category, rule, keywords in rules:
+        if any(keyword.lower() in lowered for keyword in keywords):
+            return CategoryResult(category, rule)
+    return None
+
+
+def categorize(
+    *,
+    item_summary: str,
+    seller_name: str,
+    file_name: str,
+    full_text: str = "",
+) -> CategoryResult:
+    seller_hit = _match(SELLER_RULES, seller_name)
+    if seller_hit:
+        return seller_hit
+
+    item_hit = _match(ITEM_RULES, f"{item_summary} {file_name}")
+    if item_hit:
+        return item_hit
+
+    # Deliberately no whole-page fallback: seller names such as
+    # "示例出行旅游有限公司" would otherwise be classified as 业务招待费.
+    return CategoryResult(DEFAULT_CATEGORY, "fallback")

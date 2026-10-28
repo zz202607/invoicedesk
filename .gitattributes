@@ -1,0 +1,9 @@
+* text=auto
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.pdf binary
+*.doc binary
+*.xlsx binary
+
+# Vendored assets are hashed by tests; keep their line endings stable.
+app/ui/vendor/* text eol=lf

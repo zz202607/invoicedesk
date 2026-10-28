@@ -1,0 +1,3 @@
+# Local financial data: never commit anything in this directory.
+*
+!.gitignore

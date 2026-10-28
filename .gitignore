@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+*.egg-info/
+
+# Old embedded runtime — kept locally, never committed
+python_env/
+python.zip
+python_embed.zip
+
+# App output and user data (never commit financial data)
+outputs/
+data/*
+!data/.gitignore
+_backup/
+*.xlsx
+*.log
+
+# Local databases may contain financial data; ignore them everywhere.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Local machine state
+python_path.txt
+selected_folder.txt
+.claude/
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+
+# Local evaluation data (real invoices / ground truth)
+tests/local/
+
+# Local parse output (may contain invoice data)
+/out/
+/parsed*.json
+/out.json
+/_test_*.json

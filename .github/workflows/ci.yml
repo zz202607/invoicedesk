@@ -1,0 +1,67 @@
+name: CI
+
+# Hard gate for code changes. Docs-only changes run the lightweight job in
+# docs.yml instead. Merged commits are not re-tested on main: the PR head
+# already ran this suite, and a push trigger would double every merge's
+# minutes on the 2x-billed Windows runner.
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+    paths:
+      - "app/**"
+      - "tests/**"
+      - "tools/**"
+      - "pyproject.toml"
+      - "requirements*.txt"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: App tests (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: python -m ruff check app tests conftest.py
+
+      - name: Run pytest
+        run: python -m pytest -q tests
+
+  tools:
+    name: Tool tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/requirements.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r tools/requirements.txt
+
+      - name: Run reviewer tests
+        run: python -m pytest -q tools/tests/test_ai_reviewer.py
