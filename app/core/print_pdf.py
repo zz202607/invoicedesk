@@ -263,7 +263,12 @@ def write_print_pdf(path: str | Path, rows: Sequence[ExportRow]) -> PrintInfo:
                 skipped_missing.append(reference)
                 continue
             try:
-                source = fitz.open(source_path)
+                # Embedding keeps MuPDF's source document alive until the
+                # output is written, so opening by path leaks one OS file
+                # handle per source and fails past the process limit (~512 on
+                # Windows). A memory stream has no OS handle to leak.
+                source_bytes = Path(source_path).read_bytes()
+                source = fitz.open(stream=source_bytes, filetype="pdf")
             except PDF_ERRORS:
                 skipped_invalid.append(reference)
                 continue
