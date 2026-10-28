@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import shutil
 from decimal import Decimal
 from pathlib import Path
 
@@ -636,6 +637,32 @@ def test_print_pdf_overwrites_stale_previous_export(tmp_path: Path) -> None:
         assert "old.pdf" not in text
     finally:
         document.close()
+
+
+def test_print_pdf_embeds_more_sources_than_windows_stdio_limit(
+    tmp_path: Path,
+) -> None:
+    """Regression: one OS handle per embedded source exhausted the 512-file
+    CRT limit on Windows and the save failed with ``Too many open files``."""
+    base = make_pdf(tmp_path, full_digital_lines(), name="base.pdf")
+    rows = []
+    for index in range(520):
+        copy = tmp_path / f"copy-{index:03d}.pdf"
+        shutil.copyfile(base, copy)
+        rows.append(
+            make_row(
+                id=index + 1,
+                source_path=str(copy),
+                invoice_number=f"26502000000000{index:06d}",
+            )
+        )
+
+    info = write_print_pdf(tmp_path / "print.pdf", rows)
+    assert info.records == 520
+    assert info.unique_pages == 520
+    assert info.skipped_missing == ()
+    assert info.skipped_invalid == ()
+    assert info.pages == 260
 
 
 def test_collect_rows_tolerates_bad_json(tmp_path: Path) -> None:
