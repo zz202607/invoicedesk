@@ -53,6 +53,16 @@ class CategoryResult:
     rule: str
 
 
+# A seller rule describes who sold the invoice; the item describes what was
+# bought. For most sellers the former is the better signal, but a hotel that
+# bills 餐饮服务 is a meal, not lodging. Only the overrides listed here let the
+# item rule win; anything broader would let e.g. an office-supply purchase at a
+# gas station escape 汽车费用.
+ITEM_OVERRIDES_SELLER: dict[str, frozenset[str]] = {
+    "seller.hotel": frozenset({"item.meal"}),
+}
+
+
 def _match(rules: tuple[tuple[str, str, tuple[str, ...]], ...], text: str) -> CategoryResult | None:
     lowered = text.lower()
     for category, rule, keywords in rules:
@@ -69,10 +79,11 @@ def categorize(
     full_text: str = "",
 ) -> CategoryResult:
     seller_hit = _match(SELLER_RULES, seller_name)
-    if seller_hit:
-        return seller_hit
-
     item_hit = _match(ITEM_RULES, f"{item_summary} {file_name}")
+    if seller_hit:
+        overrides = ITEM_OVERRIDES_SELLER.get(seller_hit.rule, frozenset())
+        if item_hit is None or item_hit.rule not in overrides:
+            return seller_hit
     if item_hit:
         return item_hit
 

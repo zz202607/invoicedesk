@@ -924,6 +924,7 @@ class Api:
                     "category": group.category,
                     "count": group.count,
                     "pages": group.pages,
+                    "source_pages": group.source_pages,
                     "path": group.path,
                 }
                 for group in groups.groups

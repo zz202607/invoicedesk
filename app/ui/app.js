@@ -410,6 +410,22 @@ createApp({
       }
     },
 
+    resetPoolFilters() {
+      // A fresh report starts from a clean pool: stale filters (a batch, a
+      // search, "only unlinked") would hide the invoices the user is about to
+      // associate with it.
+      this.filters = {
+        batch_id: '',
+        search: '',
+        unlinked_only: false,
+        unrecognized_only: false,
+        include_review: true,
+        date_from: '',
+        date_to: '',
+      };
+      this.selected = [];
+    },
+
     filterPayload() {
       return {
         batch_id:
@@ -501,10 +517,13 @@ createApp({
         return;
       }
       this.busy = '正在保存…';
+      let created = false;
       try {
         if (this.reportModalMode === 'create') {
           const data = await this.call('create_report', { ...form });
           this.currentReportId = data.report_id;
+          this.resetPoolFilters();
+          created = true;
         } else {
           await this.call('update_report', Number(this.currentReportId), {
             ...form,
@@ -513,6 +532,7 @@ createApp({
         this.showReportModal = false;
         await this.refreshReports();
         await this.loadReport();
+        if (created) await this.refreshInvoices(true);
         this.notify('报销单已保存。', 'success');
       } catch (error) {
         /* call() already surfaced the message. */
@@ -972,7 +992,7 @@ createApp({
           summary:
             `共 ${data.count} 张发票（待确认 ${data.review_count}），` +
             `合计 ¥${data.total}；打印 PDF ${data.pages} 页，` +
-            `分类 PDF（按公司/分类，无标注）${data.group_count || 0} 个。`,
+            `分类 PDF（按公司/分类，A4 二合一，无标注）${data.group_count || 0} 个。`,
           note: data.notice_only ? '部分票面为通知单，PDF 中已按唯一票面去重。' : '',
           kind: 'export',
           items,

@@ -518,6 +518,8 @@ def test_export_evidence(api: Api, tmp_path) -> None:
     group = data["groups"][0]
     assert (group["company"], group["category"]) == ("示例公司", "办公费用")
     assert group["count"] == 1
+    assert group["source_pages"] == 1
+    assert group["pages"] == 1
     assert Path(group["path"]).is_file()
     assert Path(group["path"]).parent.parent == Path(data["group_dir"])
 
