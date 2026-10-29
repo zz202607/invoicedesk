@@ -824,6 +824,26 @@ input[type="checkbox"] {
   margin: 0 0 12px;
 }
 
+.export-paths {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.export-paths code {
+  display: block;
+  margin-top: 4px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 12px;
+  word-break: break-all;
+  user-select: all;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -472,6 +472,27 @@
       </div>
     </div>
 
+    <!-- Export result modal: stays open until the user has found the files -->
+    <div v-if="exportResult" class="modal-backdrop" @click.self="exportResult = null">
+      <div class="modal">
+        <h2>{{ exportResult.title }}</h2>
+        <p>{{ exportResult.summary }}</p>
+        <ul class="export-paths">
+          <li v-for="item in exportResult.items" :key="item.path">
+            <div class="muted">{{ item.label }}</div>
+            <code>{{ item.path }}</code>
+          </li>
+        </ul>
+        <p v-if="exportResult.note" class="muted">{{ exportResult.note }}</p>
+        <div class="modal-actions">
+          <button class="btn primary" :disabled="!!busy" @click="openExportFolder">
+            打开文件夹
+          </button>
+          <button class="btn" @click="exportResult = null">关闭</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Summary dashboard -->
     <div v-if="showDashboardModal" class="modal-backdrop" @click.self="showDashboardModal = false">
       <div class="modal dashboard-modal">

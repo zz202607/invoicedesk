@@ -79,6 +79,18 @@ def test_rule_management_is_wired_to_the_bridge() -> None:
     assert "\\p{Cf}" in script
 
 
+def test_export_result_is_wired_to_the_bridge() -> None:
+    """Exports take a long time; the result must stay open with the paths."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    assert "exportResult" in html
+    assert "打开文件夹" in html
+    assert "openExportFolder" in html
+    assert "open_output_folder" in script
+    assert "this.exportResult = {" in script
+    assert "openExportFolder()" in script
+
+
 def test_invoice_text_is_never_rendered_as_html() -> None:
     """Parsed PDF text is untrusted; the UI must only interpolate it."""
     for name in ("index.html", "app.js"):
