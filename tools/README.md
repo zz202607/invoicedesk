@@ -14,3 +14,20 @@ skip paths changed).
 
 The reviewer checks out the PR's **base** commit, so a pull request cannot modify
 the reviewer that runs with the secret. Fork PRs are skipped.
+
+## build_app.py
+
+Builds `dist/InvoiceDesk` with PyInstaller (`InvoiceDesk.spec`), then runs the
+frozen EXE with `--smoke` in a temporary working directory:
+
+```bash
+python -m pip install -r requirements-build.txt
+python tools/build_app.py            # build + frozen smoke
+python tools/build_app.py --skip-smoke
+python tools/build_app.py --skip-build   # re-smoke the existing dist/
+```
+
+## make_icon.py
+
+Draws the multi-size `build/icon.ico` with the standard library only; no Pillow.
+`--preview build/icon.png` also writes a 256 px PNG for README/screenshots.

@@ -12,6 +12,7 @@ on:
       - "app/**"
       - "tests/**"
       - "tools/**"
+      - "InvoiceDesk.spec"
       - "pyproject.toml"
       - "requirements*.txt"
       - ".github/workflows/ci.yml"

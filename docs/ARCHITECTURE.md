@@ -69,7 +69,7 @@
 
 ## 数据库边界
 
-- 默认位置 `data/invoicedesk.db`；`data/` 内独立 `.gitignore` + 全局 `*.db` 忽略兜底。
+- 默认位置：源码运行 `data/invoicedesk.db`；冻结包 `%LOCALAPPDATA%\InvoiceDesk\invoicedesk.db`（`INVOICEDESK_HOME` / `INVOICEDESK_DB` 可覆盖）；`data/` 内独立 `.gitignore` + 全局 `*.db` 忽略兜底。
 - `db.connect` 默认拒绝仓库内非 `data/`、`out/`、`tests/local/` 的路径，以及 UNC、网络盘、OneDrive 等非本机存储；CLI `--force` 是显式例外。
 - 金额只以整数分落库，避免 REAL 浮点漂移；Python 侧仍用 `Decimal`。
 - 导入去重：文件 SHA-256 命中则整份跳过；票号命中则跳过该条；无票号记录保留待确认。

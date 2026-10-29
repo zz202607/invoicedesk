@@ -96,9 +96,21 @@
 
 ## Phase 3 — 产品化
 
-- PyInstaller 打包（one-dir）、首次启动向导
-- 自动备份/恢复、日志、图标、README 截图、v1.0
-- 老机器 WebView2 缺失提示
+### Phase 3a — 打包、日志与启动防护（2026-10-29 完成）
+
+- [x] PyInstaller one-dir 打包（`InvoiceDesk.spec` + `tools/build_app.py`），窗口版无控制台
+- [x] 打包版数据/日志放到 `%LOCALAPPDATA%\InvoiceDesk`；源码运行保持 `data/`、`out/`
+- [x] 滚动日志 + 未捕获异常钩子；WebView2 缺失时弹窗给出安装地址
+- [x] 多尺寸图标（标准库生成）；`--smoke` 对冻结包自检 UI/数据库/WebView2
+
+**证据**：one-dir 64.1 MB；冻结包 smoke exit 0；实机启动 10 秒后数据库与日志已生成（UI 已调用
+bootstrap）。**缺口**：未在干净机器上双击验证；未签名，首次运行可能触发 SmartScreen。
+
+### Phase 3b — 备份、恢复与首次启动向导
+
+- [ ] 自动备份/恢复（启动/退出滚动备份，显式恢复入口）
+- [ ] 首次启动向导（数据目录选择、导入引导）
+- [ ] README 截图、版本信息、v1.0
 
 **验收**：干净 Windows 机器双击可用；重装可恢复；连续使用一周无数据丢失。
 
