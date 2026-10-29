@@ -1,7 +1,7 @@
 # 发票管家（InvoiceDesk）· PROGRESS
 
 > 最后更新：2026-10-29
-> 当前阶段：**Phase 3e P2 重复票审查已实现，待 PR 审查与实机验收**；3b 备份已合并并重打包 smoke 全 true
+> 当前阶段：**Phase 3e P2 重复票审查已实现，PR #13 CI 全绿，待 _ming 确认合并与实机验收**；3b 备份已合并
 > 分支：`main`（进行中：`feat/conflict-review`）· 仓库：[invoicedesk](https://github.com/zz202607/invoicedesk)
 
 ## 现在
