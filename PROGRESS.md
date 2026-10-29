@@ -1,7 +1,7 @@
 # 发票管家（InvoiceDesk）· PROGRESS
 
 > 最后更新：2026-10-29
-> 当前阶段：**Phase 3b 备份/恢复（P1）已实现，待实机验收与打包**；3e 队列/向导已随 PR #11 合并（`efaf88c`）
+> 当前阶段：**Phase 3b 备份/恢复（P1）已合并（`6439e29`），待实机验收与打包**；3e 队列/向导见 `efaf88c`
 > 分支：`main` · 仓库：[invoicedesk](https://github.com/zz202607/invoicedesk)（public）
 
 ## 现在
@@ -42,7 +42,7 @@
 - 工作台验收（10-29）：781 行实机通过滚动/预览/搜索/看板/导出；导出结果改常驻弹窗。
 - 打包（3a）：PyInstaller one-dir，冻结态 DB/out/logs 在 `%LOCALAPPDATA%\InvoiceDesk`；滚动日志、
   异常钩子、WebView2 检测、`--smoke` 自检；实测 64.1MB，smoke exit 0。
-- 合并：私有 PR #2–#8；公开 #1–#7、#10、#11 均 CI 全绿并经 _ming 确认（3e 见 `efaf88c`）。
+- 合并：私有 PR #2–#8；公开 #1–#7、#10–#12 均经 _ming 确认（3e `efaf88c`、3b `6439e29`；#12 review 空响应按基建故障处理）。
 - 审查：2b/2c/2d/2e 多轮修复异常路径、回滚、TOCTOU、LIKE 转义、CSP、并发写；本地测试/CI 绿。
 - OCR（3c）：`app/core/ocr.py` 用随包 RapidOCR（离线）识别无文本层页，OCR 行喂给同一几何解析器；
   共用校验；红章遮「普通」时按票号兜底票型；买卖方按标签/列排序；结果标「待确认」、置信度≤medium。
