@@ -1326,6 +1326,27 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 
+.backup-modal {
+  width: min(720px, 100%);
+}
+
+.backup-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 4px 0 12px;
+}
+
+.backup-dir {
+  flex: 1;
+  min-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
 .rule-ops .icon-btn {
   margin-left: 4px;
 }
