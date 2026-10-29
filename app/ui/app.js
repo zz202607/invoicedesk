@@ -49,6 +49,10 @@ createApp({
       previewForm: null,
       invoiceEdits: [],
       previewSaving: false,
+      reviewQueue: null,
+      reviewConfirmed: [],
+      reviewResume: false,
+      reviewSaving: false,
       fieldLabels: {
         invoice_number: '票号',
         invoice_date: '日期',
@@ -89,6 +93,37 @@ createApp({
       showImportModal: false,
       importForm: { path: '', label: '' },
       pickingFolder: false,
+      showWizard: false,
+      wizardStep: 1,
+      wizardBusy: false,
+      pickingWizardFolder: false,
+      wizardStats: {
+        loading: false,
+        count: 0,
+        total: '0.00',
+        review_count: 0,
+        missing_amount_count: 0,
+        categories: [],
+        unlinked_ids: [],
+      },
+      wizard: {
+        month: '',
+        folder: '',
+        label: '',
+        importResult: null,
+        batchId: null,
+        reportId: '',
+        reportSummary: '',
+        addedCount: 0,
+        skipped: null,
+        reportForm: {
+          company: '',
+          reporter: '',
+          department: '',
+          month: '',
+          title: '',
+        },
+      },
       showRulesModal: false,
       rulesLoading: false,
       categoryRules: [],
@@ -114,6 +149,13 @@ createApp({
     },
     activeLine() {
       return this.lines.find((line) => line.sequence === this.activeSequence) || null;
+    },
+    reviewPosition() {
+      if (!this.reviewQueue || !this.preview) return 0;
+      const index = this.reviewQueue.findIndex(
+        (row) => row.id === this.preview.invoice.id
+      );
+      return index < 0 ? 0 : index + 1;
     },
     previewDirty() {
       const invoice = this.preview && this.preview.invoice;
@@ -163,6 +205,7 @@ createApp({
         this.showImportModal ||
         this.showDashboardModal ||
         this.showShortcutsModal ||
+        this.showWizard ||
         Boolean(this.exportResult)
       );
     },
@@ -270,6 +313,7 @@ createApp({
         } else if (this.exportResult) this.exportResult = null;
         else if (this.showShortcutsModal) this.showShortcutsModal = false;
         else if (this.showDashboardModal) this.showDashboardModal = false;
+        else if (this.showWizard) this.closeWizard();
         else if (this.showReportModal) this.showReportModal = false;
         else if (this.showMileageModal) this.showMileageModal = false;
         else if (this.showRulesModal) this.showRulesModal = false;
@@ -743,6 +787,34 @@ createApp({
       }
     },
 
+    async runImport(path, label) {
+      const data = await this.call('import_folder', path, label || '');
+      this.unrecognizedDismissed = false;
+      await this.reloadBootstrap();
+      if (data.batch_id != null) {
+        // Focus the fresh batch so the just-imported rows — company and
+        // category — are what the user sees first.
+        this.filters.batch_id = String(data.batch_id);
+        this.poolVisible = true;
+      }
+      await this.refreshInvoices(true);
+      return data;
+    },
+
+    importMessage(data) {
+      let message =
+        `导入完成：新增 ${data.invoices_imported} 张，` +
+        `重复 ${data.invoices_duplicate}，冲突 ${data.invoices_conflict}，` +
+        `待确认 ${data.needs_review}，合计 ¥${data.amount}。`;
+      if (data.reparsed) {
+        message += `已自动补识别旧记录 ${data.reparsed} 张。`;
+      }
+      if (data.reparse_failed) {
+        message += `仍有 ${data.reparse_failed} 张未识别，可在顶部提示条重试。`;
+      }
+      return message;
+    },
+
     async submitImport() {
       if (!this.importForm.path) {
         this.notify('请先选择发票文件夹。', 'error');
@@ -750,32 +822,12 @@ createApp({
       }
       this.busy = '正在导入发票，请稍候…';
       try {
-        const data = await this.call(
-          'import_folder',
+        const data = await this.runImport(
           this.importForm.path,
           this.importForm.label
         );
         this.showImportModal = false;
-        this.unrecognizedDismissed = false;
-        await this.reloadBootstrap();
-        if (data.batch_id != null) {
-          // Focus the fresh batch so the just-imported rows — company and
-          // category — are what the user sees first.
-          this.filters.batch_id = String(data.batch_id);
-          this.poolVisible = true;
-        }
-        await this.refreshInvoices(true);
-        let message =
-          `导入完成：新增 ${data.invoices_imported} 张，` +
-          `重复 ${data.invoices_duplicate}，冲突 ${data.invoices_conflict}，` +
-          `待确认 ${data.needs_review}，合计 ¥${data.amount}。`;
-        if (data.reparsed) {
-          message += `已自动补识别旧记录 ${data.reparsed} 张。`;
-        }
-        if (data.reparse_failed) {
-          message += `仍有 ${data.reparse_failed} 张未识别，可在顶部提示条重试。`;
-        }
-        this.notify(message, 'success', 10000);
+        this.notify(this.importMessage(data), 'success', 10000);
       } catch (error) {
         /* surfaced already */
       } finally {
@@ -801,6 +853,202 @@ createApp({
       } finally {
         this.busy = '';
       }
+    },
+
+    /* ----------------------------------------------------------- wizard */
+
+    openWizard() {
+      const recent = this.boot.recent_import_paths || [];
+      const report = this.report;
+      this.wizard = {
+        month: this.boot.default_month,
+        folder: recent.length ? recent[0] : '',
+        label: '',
+        importResult: null,
+        batchId: null,
+        reportId: '',
+        reportSummary: '',
+        addedCount: 0,
+        skipped: null,
+        reportForm: {
+          company: report ? report.company : '',
+          reporter: report ? report.reporter : '',
+          department: report ? report.department : '',
+          month: this.boot.default_month,
+          title: '',
+        },
+      };
+      this.wizardStep = 1;
+      this.wizardStats = {
+        loading: false,
+        count: 0,
+        total: '0.00',
+        review_count: 0,
+        missing_amount_count: 0,
+        categories: [],
+        unlinked_ids: [],
+      };
+      this.showWizard = true;
+    },
+
+    closeWizard() {
+      this.showWizard = false;
+    },
+
+    async pickWizardFolder() {
+      if (this.pickingWizardFolder) return;
+      this.pickingWizardFolder = true;
+      try {
+        const data = await this.call('pick_folder', this.wizard.folder || '');
+        if (data && data.path) this.wizard.folder = data.path;
+      } catch (error) {
+        /* call() already surfaced the message */
+      } finally {
+        this.pickingWizardFolder = false;
+      }
+    },
+
+    async wizardImport() {
+      if (!this.wizard.folder) {
+        this.notify('请先选择发票文件夹。', 'error');
+        return;
+      }
+      this.wizardBusy = true;
+      this.busy = '正在导入发票，请稍候…';
+      try {
+        const data = await this.runImport(this.wizard.folder, this.wizard.label);
+        this.wizard.importResult = data;
+        this.wizard.batchId = data.batch_id;
+        if (!this.wizard.reportForm.month) {
+          this.wizard.reportForm.month = this.wizard.month;
+        }
+        await this.wizardRefreshStats();
+        this.notify(this.importMessage(data), 'success', 10000);
+      } catch (error) {
+        /* call() already surfaced the message */
+      } finally {
+        this.wizardBusy = false;
+        this.busy = '';
+      }
+    },
+
+    async wizardRefreshStats() {
+      if (this.wizard.batchId == null) return;
+      this.wizardStats = { ...this.wizardStats, loading: true };
+      try {
+        const filters = {
+          batch_id: Number(this.wizard.batchId),
+          date_from: '',
+          date_to: '',
+          include_review: true,
+        };
+        const [dash, unlinked] = await Promise.all([
+          this.call('dashboard', filters),
+          this.silentCall('list_invoices', { ...filters, unlinked_only: true }),
+        ]);
+        this.wizardStats = {
+          loading: false,
+          count: dash.count,
+          total: dash.total,
+          review_count: dash.review_count,
+          missing_amount_count: dash.missing_amount_count,
+          categories: dash.categories,
+          unlinked_ids: unlinked.rows.map((row) => row.id),
+        };
+      } catch (error) {
+        this.wizardStats = { ...this.wizardStats, loading: false };
+      }
+    },
+
+    async wizardStartReview() {
+      if (this.wizard.batchId == null) return;
+      this.showWizard = false;
+      await this.openReviewQueue({
+        batchId: Number(this.wizard.batchId),
+        resume: true,
+      });
+    },
+
+    wizardGo(step) {
+      const target = Number(step);
+      // Completed steps can be reopened; later ones unlock in order.
+      if (target < 1 || target > this.wizardStep) return;
+      this.wizardStep = target;
+      if (target === 2 || target === 3) this.wizardRefreshStats();
+    },
+
+    wizardNext(step) {
+      if (Number(step) <= this.wizardStep) return;
+      this.wizardStep = Number(step);
+      if (this.wizardStep === 2 || this.wizardStep === 3) {
+        this.wizardRefreshStats();
+      }
+    },
+
+    async wizardCreateReport() {
+      const form = this.wizard.reportForm;
+      if (!form.company || !form.reporter || !form.month) {
+        this.notify('公司、报销人和月份不能为空。', 'error');
+        return;
+      }
+      this.wizardBusy = true;
+      this.busy = '正在生成报销单…';
+      try {
+        const created = await this.call('create_report', { ...form });
+        this.wizard.reportId = created.report_id;
+        this.currentReportId = created.report_id;
+        this.wizard.reportSummary =
+          `${form.company} / ${form.reporter} / ${form.month}`;
+        let added = 0;
+        let skipped = null;
+        const ids = this.wizardStats.unlinked_ids;
+        if (ids.length) {
+          const result = await this.call(
+            'add_lines_from_invoices',
+            created.report_id,
+            ids,
+            ''
+          );
+          added = result.added;
+          skipped = result.skipped ? result : null;
+        }
+        this.wizard.addedCount = added;
+        this.wizard.skipped = skipped;
+        await this.refreshReports();
+        await this.loadReport();
+        await this.refreshInvoices(false);
+        const parts = [`报销单已生成，新增 ${added} 行`];
+        if (skipped) {
+          parts.push(
+            `跳过 ${skipped.skipped} 张（已关联 ${skipped.skipped_linked}、` +
+              `缺金额 ${skipped.skipped_missing_amount}、` +
+              `缺日期 ${skipped.skipped_missing_date}）`
+          );
+        }
+        this.notify(parts.join('；'), 'success', 9000);
+      } catch (error) {
+        /* call() already surfaced the message */
+      } finally {
+        this.wizardBusy = false;
+        this.busy = '';
+      }
+    },
+
+    async wizardExportReport() {
+      if (!this.wizard.reportId) return;
+      this.currentReportId = this.wizard.reportId;
+      if (!this.report || this.report.id !== Number(this.wizard.reportId)) {
+        await this.loadReport();
+      }
+      await this.exportReport();
+    },
+
+    async wizardExportEvidence() {
+      if (this.wizard.batchId == null) return;
+      await this.runExportEvidence({
+        batch_id: Number(this.wizard.batchId),
+        include_review: true,
+      });
     },
 
     /* ------------------------------------------------------------ rules */
@@ -997,11 +1245,15 @@ createApp({
     },
 
     async exportEvidence() {
+      await this.runExportEvidence(this.filterPayload());
+    },
+
+    async runExportEvidence(filters) {
       this.busy = '正在导出证据包和分类 PDF…';
       try {
         const data = await this.call(
           'export_evidence',
-          this.filterPayload(),
+          filters,
           this.report ? this.report.company : ''
         );
         const items = [
@@ -1097,6 +1349,120 @@ createApp({
       } finally {
         this.categorySaving = false;
       }
+    },
+
+    /* ----------------------------------------------------- review queue */
+
+    async openReviewQueue(options) {
+      if (this.preview && this.previewDirty) {
+        this.notify('请先保存或关闭当前发票的修正，再进入待确认队列。', 'error');
+        return;
+      }
+      const opts = options || {};
+      const scoped = opts.batchId !== undefined && opts.batchId !== null;
+      const batchId = scoped
+        ? Number(opts.batchId)
+        : this.filters.batch_id === ''
+          ? null
+          : Number(this.filters.batch_id);
+      this.busy = '正在整理待确认队列…';
+      try {
+        const data = await this.call('list_invoices', {
+          batch_id: batchId,
+          date_from: scoped ? '' : this.filters.date_from,
+          date_to: scoped ? '' : this.filters.date_to,
+          include_review: true,
+          review_only: true,
+        });
+        if (!data.rows.length) {
+          this.notify('没有待确认的发票。', 'info');
+          if (opts.resume) this.resumeWizard();
+          return;
+        }
+        this.reviewQueue = data.rows;
+        this.reviewConfirmed = [];
+        this.reviewResume = Boolean(opts.resume);
+        await this.openPreview(data.rows[0]);
+        this.notify(
+          `待确认队列共 ${data.rows.length} 张：确认无误后自动下一张。`,
+          'info',
+          5000
+        );
+      } catch (error) {
+        /* call() already surfaced the message */
+        if (opts.resume) this.resumeWizard();
+      } finally {
+        this.busy = '';
+      }
+    },
+
+    reviewReason(row) {
+      if (!row) return '';
+      const parts = [];
+      if (row.warning_text) parts.push(row.warning_text);
+      if (row.confidence_notes) parts.push(`低置信：${row.confidence_notes}`);
+      if (!row.invoice_number) parts.push('缺票号');
+      if (!row.invoice_date) parts.push('缺日期');
+      if (!row.amount) parts.push('缺金额');
+      return parts.length ? parts.join('；') : '需要人工核对';
+    },
+
+    async skipReview() {
+      if (!this.reviewQueue || !this.reviewQueue.length) return;
+      await this.stepPreview(1);
+    },
+
+    async advanceReview(confirmedRow) {
+      const queue = this.reviewQueue || [];
+      const index = queue.findIndex((row) => row.id === confirmedRow.id);
+      if (index >= 0) {
+        this.reviewConfirmed.push({ row: confirmedRow, index });
+        queue.splice(index, 1);
+      }
+      if (!queue.length) {
+        // Keep the queue bar so the last confirmation can still be undone.
+        this.notify('待确认队列已全部确认。', 'success', 6000);
+        return;
+      }
+      const next = queue[Math.min(Math.max(index, 0), queue.length - 1)];
+      await this.openPreview(next);
+    },
+
+    async undoReview() {
+      if (!this.reviewConfirmed.length || this.reviewSaving) return;
+      const last = this.reviewConfirmed[this.reviewConfirmed.length - 1];
+      this.reviewSaving = true;
+      try {
+        const data = await this.call('reopen_invoice', last.row.id);
+        this.reviewConfirmed.pop();
+        const queue = this.reviewQueue || [];
+        queue.splice(Math.min(last.index, queue.length), 0, data.invoice);
+        await this.refreshInvoices(false);
+        await this.openPreview(data.invoice);
+        this.notify('已撤销确认，这张发票回到待确认队列。', 'success');
+      } catch (error) {
+        /* call() already surfaced the message */
+      } finally {
+        this.reviewSaving = false;
+      }
+    },
+
+    exitReviewQueue() {
+      const resume = this.reviewResume;
+      this.reviewQueue = null;
+      this.reviewConfirmed = [];
+      this.reviewResume = false;
+      if (!resume) return;
+      this.preview = null;
+      this.previewForm = null;
+      this.invoiceEdits = [];
+      this.resumeWizard();
+    },
+
+    resumeWizard() {
+      this.showWizard = true;
+      this.wizardStep = 2;
+      this.wizardRefreshStats();
     },
 
     /* ---------------------------------------------------------- preview */
@@ -1199,6 +1565,12 @@ createApp({
         this.invoiceEdits = data.edits;
         await this.refreshInvoices(false);
         this.notify('已标记为已核对；识别警告与低置信字段仍保留。', 'success');
+        if (this.reviewQueue) {
+          // The queue own its own ordering: drop the confirmed row and jump
+          // to the next one without re-filtering the pool.
+          await this.advanceReview(data.invoice);
+          return;
+        }
         const index = this.invoices.findIndex(
           (row) => row.id === data.invoice.id
         );
@@ -1215,8 +1587,9 @@ createApp({
     },
 
     async stepPreview(delta) {
-      if (!this.preview || !this.invoices.length) return;
-      const rows = this.invoices;
+      if (!this.preview) return;
+      const rows = this.reviewQueue || this.invoices;
+      if (!rows.length) return;
       let index = rows.findIndex((row) => row.id === this.preview.invoice.id);
       if (index < 0) index = delta > 0 ? -1 : rows.length;
       const next = rows[index + delta];
@@ -1237,9 +1610,14 @@ createApp({
 
     closePreview() {
       if (this.previewDirty && !window.confirm('有未保存的修正，确定关闭？')) return;
+      const resume = this.reviewResume;
       this.preview = null;
       this.previewForm = null;
       this.invoiceEdits = [];
+      this.reviewQueue = null;
+      this.reviewConfirmed = [];
+      this.reviewResume = false;
+      if (resume) this.resumeWizard();
     },
 
     formatTime(value) {

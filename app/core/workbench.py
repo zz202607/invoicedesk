@@ -162,6 +162,7 @@ def list_invoices(
     include_review: bool = True,
     unlinked_only: bool = False,
     unrecognized_only: bool = False,
+    review_only: bool = False,
     search: str = "",
     invoice_id: int | None = None,
 ) -> list[InvoiceRow]:
@@ -192,6 +193,10 @@ def list_invoices(
         )
     if unrecognized_only:
         where.append("i.invoice_type IN ('scanned', 'unknown', 'error')")
+    if review_only:
+        # The review queue walks these rows one by one; combine with the batch
+        # or date filters to scope a single month's cleanup.
+        where.append("i.needs_review = 1")
     if search:
         pattern = _like_pattern(search)
         where.append(

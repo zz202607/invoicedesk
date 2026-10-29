@@ -31,6 +31,14 @@
       <span class="spacer"></span>
       <div class="quick-actions">
         <button
+          class="btn action wizard"
+          @click="openWizard"
+          :disabled="!!busy"
+          title="按步骤完成本月报账：导入 → 核对 → 分类 → 生成报销单 → 导出"
+        >
+          <span class="action-icon">✓</span> 本月报账
+        </button>
+        <button
           class="btn action import"
           @click="openImportModal"
           :disabled="!!busy"
@@ -144,7 +152,12 @@
         <div class="summary-bar">
           <span><b>{{ invoiceSummary.count }}</b> 张发票</span>
           <span title="缺失金额的发票不计入合计">合计 <b>¥{{ invoiceSummary.total }}</b></span>
-          <span v-if="invoiceSummary.review_count" class="warn">待确认 {{ invoiceSummary.review_count }}</span>
+          <button
+            v-if="invoiceSummary.review_count"
+            class="summary-action"
+            title="只列出需要人工核对的发票，逐张确认，支持跳过与撤销"
+            @click="openReviewQueue()"
+          >待确认 {{ invoiceSummary.review_count }} · 逐个确认</button>
           <span v-if="invoiceSummary.linked_count">已关联 {{ invoiceSummary.linked_count }}</span>
           <span v-if="invoiceSummary.missing_amount_count" class="warn">缺金额 {{ invoiceSummary.missing_amount_count }}</span>
           <span class="spacer"></span>
@@ -355,6 +368,30 @@
         <button class="icon-btn" @click="changeZoom(-0.25)" title="缩小">－</button>
         <button class="icon-btn" @click="changeZoom(0.25)" title="放大">＋</button>
         <button class="icon-btn" @click="closePreview" title="关闭">×</button>
+      </div>
+      <div v-if="reviewQueue" class="review-bar">
+        <span class="badge warn">待确认队列</span>
+        <b v-if="reviewQueue.length">{{ reviewPosition }} / {{ reviewQueue.length }}</b>
+        <span v-else class="badge linked">全部确认完成</span>
+        <span
+          v-if="reviewQueue.length"
+          class="review-reason ellipsis"
+          :title="reviewReason(preview.invoice)"
+        >{{ reviewReason(preview.invoice) }}</span>
+        <span class="spacer"></span>
+        <button
+          class="btn ghost"
+          :disabled="!reviewQueue.length || previewSaving || !!busy"
+          title="先不确认，直接看下一张"
+          @click="skipReview"
+        >跳过</button>
+        <button
+          class="btn ghost"
+          :disabled="!reviewConfirmed.length || reviewSaving || !!busy"
+          title="把上一张已确认的发票放回队列"
+          @click="undoReview"
+        >撤销确认</button>
+        <button class="icon-btn" @click="exitReviewQueue" title="退出队列">×</button>
       </div>
       <div class="preview-fields" v-if="previewForm">
         <div>
@@ -624,6 +661,199 @@
           <button class="btn" @click="showImportModal = false">取消</button>
           <button class="btn primary" :disabled="!!busy || !importForm.path" @click="submitImport">开始导入</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Monthly reimbursement wizard: import → review → categories → report → export -->
+    <div v-if="showWizard" class="modal-backdrop" @click.self="closeWizard">
+      <div class="modal wizard-modal">
+        <div class="wizard-head">
+          <div>
+            <h2>本月报账</h2>
+            <p class="muted">按步骤走完：导入 → 核对 → 分类 → 生成报销单 → 导出。</p>
+          </div>
+          <span class="spacer"></span>
+          <button class="icon-btn" @click="closeWizard" title="关闭">×</button>
+        </div>
+
+        <ol class="wizard-steps">
+          <li
+            v-for="(label, index) in ['导入发票', '核对待确认', '确认分类', '生成报销单', '导出']"
+            :key="label"
+            :class="{ current: wizardStep === index + 1, done: wizardStep > index + 1 }"
+            :title="index + 1 < wizardStep ? '返回这一步' : ''"
+            @click="wizardGo(index + 1)"
+          >{{ index + 1 }}. {{ label }}</li>
+        </ol>
+
+        <div v-if="wizard.importResult" class="wizard-batch">
+          <span>批次 <b>#{{ wizard.batchId }}</b></span>
+          <span>新增 {{ wizard.importResult.invoices_imported }} 张</span>
+          <span>待确认 {{ wizardStats.review_count }} 张</span>
+          <span>合计 <b>¥{{ wizardStats.total }}</b></span>
+        </div>
+
+        <!-- Step 1: import -->
+        <section v-if="wizardStep === 1" class="wizard-body">
+          <div class="form-grid">
+            <label class="wide">发票文件夹 *
+              <div class="folder-input">
+                <input v-model.trim="wizard.folder" placeholder="D:\发票\2026-10">
+                <button class="btn" type="button" :disabled="pickingWizardFolder" @click="pickWizardFolder">
+                  {{ pickingWizardFolder ? '选择中…' : '浏览…' }}
+                </button>
+              </div>
+            </label>
+            <label>报账月份 *<input type="month" v-model="wizard.month"></label>
+            <label>批次名称<input v-model.trim="wizard.label" placeholder="可选，默认用文件夹名"></label>
+          </div>
+          <div v-if="boot.recent_import_paths.length" class="recent-paths">
+            <div class="recent-title">最近用过的文件夹（点击填入）</div>
+            <button
+              v-for="path in boot.recent_import_paths.slice(0, 4)"
+              :key="'wizard-' + path"
+              type="button"
+              class="recent-path"
+              :class="{ active: wizard.folder === path }"
+              :title="path"
+              @click="wizard.folder = path"
+            >
+              <b>{{ folderName(path) }}</b><span>{{ path }}</span>
+            </button>
+          </div>
+          <p class="muted">已导入过的文件会自动跳过；图片发票用本机 OCR 补识别，不上传。</p>
+          <div class="modal-actions">
+            <button class="btn" @click="closeWizard">稍后再说</button>
+            <button v-if="wizard.importResult" class="btn" @click="wizardNext(2)">下一步：核对</button>
+            <button
+              class="btn primary"
+              :disabled="wizardBusy || !!busy || !wizard.folder"
+              @click="wizardImport"
+            >{{ wizard.importResult ? '重新导入' : '开始导入' }}</button>
+          </div>
+        </section>
+
+        <!-- Step 2: review queue -->
+        <section v-else-if="wizardStep === 2" class="wizard-body">
+          <div v-if="wizardStats.loading" class="empty">正在统计…</div>
+          <template v-else>
+            <div class="dash-tiles">
+              <div class="dash-tile" :class="{ warn: wizardStats.review_count }">
+                <span class="dash-tile-label">待确认</span><b>{{ wizardStats.review_count }}</b>
+              </div>
+              <div class="dash-tile">
+                <span class="dash-tile-label">本批次发票</span><b>{{ wizardStats.count }}</b>
+              </div>
+              <div class="dash-tile">
+                <span class="dash-tile-label">合计</span><b>¥{{ wizardStats.total }}</b>
+              </div>
+              <div class="dash-tile" :class="{ warn: wizardStats.missing_amount_count }">
+                <span class="dash-tile-label">缺金额</span><b>{{ wizardStats.missing_amount_count }}</b>
+              </div>
+            </div>
+            <p v-if="wizardStats.review_count" class="muted">
+              逐张核对票面：点「确认无误」后自动下一张；拿不准就跳过，回头再处理。
+              撤销确认可把上一张放回队列。
+            </p>
+            <p v-else class="muted">本批次没有待确认的发票，可以直接进入下一步。</p>
+          </template>
+          <div class="modal-actions">
+            <button class="btn" @click="wizardGo(1)">上一步</button>
+            <button class="btn" :disabled="wizardStats.loading" @click="wizardRefreshStats">刷新</button>
+            <button
+              class="btn primary"
+              :disabled="!wizardStats.review_count || wizardBusy"
+              @click="wizardStartReview"
+            >逐个确认（{{ wizardStats.review_count }}）</button>
+            <button class="btn" @click="wizardNext(3)">下一步：分类</button>
+          </div>
+        </section>
+
+        <!-- Step 3: categories -->
+        <section v-else-if="wizardStep === 3" class="wizard-body">
+          <p class="muted">
+            按分类核对金额。要改分类：在左侧发票池点分类标签，或打开某张发票修改；
+            改完点「刷新」。
+          </p>
+          <div v-if="wizardStats.loading" class="empty">正在统计…</div>
+          <div v-else-if="!wizardStats.categories.length" class="empty">本批次没有分类数据。</div>
+          <div v-else class="wizard-cats">
+            <table class="data-table">
+              <thead>
+                <tr><th>分类</th><th class="num">张数</th><th class="num">金额</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in wizardStats.categories" :key="item.category">
+                  <td>{{ item.category }}</td>
+                  <td class="num">{{ item.count }}</td>
+                  <td class="num mono">¥{{ item.total }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="modal-actions">
+            <button class="btn" @click="wizardGo(2)">上一步</button>
+            <button class="btn" :disabled="wizardStats.loading" @click="wizardRefreshStats">刷新</button>
+            <button class="btn primary" @click="wizardNext(4)">下一步：生成报销单</button>
+          </div>
+        </section>
+
+        <!-- Step 4: create the report from the batch -->
+        <section v-else-if="wizardStep === 4" class="wizard-body">
+          <template v-if="!wizard.reportId">
+            <div class="form-grid">
+              <label>公司 *<input v-model.trim="wizard.reportForm.company" list="company-options" placeholder="如：示例甲"></label>
+              <label>报销人 *<input v-model.trim="wizard.reportForm.reporter" list="reporter-options" placeholder="姓名"></label>
+              <label>部门<input v-model.trim="wizard.reportForm.department" list="department-options" placeholder="可选"></label>
+              <label>月份 *<input type="month" v-model="wizard.reportForm.month"></label>
+              <label class="wide">标题<input v-model.trim="wizard.reportForm.title" placeholder="留空则自动生成"></label>
+            </div>
+            <p class="muted">
+              将把本批次 {{ wizardStats.unlinked_ids.length }} 张未关联发票各生成一行；
+              缺金额、缺日期、已关联的会跳过。
+            </p>
+            <div class="modal-actions">
+              <button class="btn" @click="wizardGo(3)">上一步</button>
+              <button
+                class="btn primary"
+                :disabled="wizardBusy || !!busy || !wizard.reportForm.company || !wizard.reportForm.reporter || !wizard.reportForm.month"
+                @click="wizardCreateReport"
+              >{{ wizardBusy ? '正在生成…' : '生成报销单' }}</button>
+            </div>
+          </template>
+          <template v-else>
+            <p>
+              报销单已生成：<b>{{ wizard.reportSummary }}</b>，新增
+              <b>{{ wizard.addedCount }}</b> 行。
+            </p>
+            <p v-if="wizard.skipped" class="muted">
+              跳过 {{ wizard.skipped.skipped }} 张：已关联 {{ wizard.skipped.skipped_linked }}、
+              缺金额 {{ wizard.skipped.skipped_missing_amount }}、
+              缺日期 {{ wizard.skipped.skipped_missing_date }}。
+            </p>
+            <div class="modal-actions">
+              <button class="btn" @click="wizardGo(3)">返回分类</button>
+              <button class="btn primary" @click="wizardNext(5)">下一步：导出</button>
+            </div>
+          </template>
+        </section>
+
+        <!-- Step 5: export -->
+        <section v-else class="wizard-body">
+          <p class="muted">报销单和证据包都只写本机 out 目录，源发票不动。</p>
+          <div class="wizard-export">
+            <button class="btn primary" :disabled="!wizard.reportId || !!busy" @click="wizardExportReport">
+              导出报销单 Excel
+            </button>
+            <button class="btn" :disabled="wizard.batchId == null || !!busy" @click="wizardExportEvidence">
+              导出证据包（含分类 PDF）
+            </button>
+          </div>
+          <p class="muted">导出完成后会列出文件位置，可直接打开文件夹。</p>
+          <div class="modal-actions">
+            <button class="btn" @click="closeWizard">完成</button>
+          </div>
+        </section>
       </div>
     </div>
 
