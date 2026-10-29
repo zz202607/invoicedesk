@@ -482,12 +482,13 @@ def _run_export(args: argparse.Namespace) -> int:
     if group_info.groups:
         print(
             f"分类 PDF: {group_info.directory}"
-            f"（{len(group_info.groups)} 个文件，按公司和分类拆分，无标注）"
+            f"（{len(group_info.groups)} 个文件，按公司和分类拆分，A4 二合一，无标注）"
         )
         for group in group_info.groups:
             print(
                 f"  {group.company} / {group.category}"
-                f"：{group.count} 张、{group.pages} 页 → {group.path}"
+                f"：{group.count} 张、{group.source_pages} 张票面 / "
+                f"{group.pages} 张 A4 → {group.path}"
             )
     _print_skipped("缺少源文件", print_info.skipped_missing)
     _print_skipped("无法打开票面", print_info.skipped_invalid)

@@ -10,6 +10,8 @@ import pytest
 
 from app.core.export import ExportError, ExportRow
 from app.core.group_pdf import (
+    A4_HEIGHT,
+    A4_WIDTH,
     MANIFEST_NAME,
     UNKNOWN_CATEGORY,
     UNKNOWN_COMPANY,
@@ -70,14 +72,44 @@ def test_groups_by_company_and_category_without_labels(tmp_path: Path) -> None:
     by_key = {(group.company, group.category): group for group in result.groups}
     example_a = by_key[("示例甲公司", "差旅费")]
     assert example_a.count == 2
-    assert example_a.pages == 2
+    assert example_a.source_pages == 2
+    assert example_a.pages == 1
     company_dir = Path(example_a.path).parent
     assert company_dir.name == "示例甲公司"
     assert Path(example_a.path).name == "差旅费.pdf"
-    # Plain merge: source text survives, and no label, sequence, or watermark
+    # Two invoice pages share one A4 sheet; no label, sequence, or watermark
     # text is added anywhere.
-    assert page_texts(Path(example_a.path)) == ["甲票内容", "乙票内容"]
+    assert page_texts(Path(example_a.path)) == ["甲票内容\n乙票内容"]
     assert not (tmp_path / "out" / "发票二合一.pdf").exists()
+
+
+def test_group_pdf_uses_a4_sheets_with_two_pages_each(tmp_path: Path) -> None:
+    first = make_pdf(tmp_path, [(40, 40, "票一")], name="a.pdf")
+    second = make_pdf(tmp_path, [(40, 40, "票二")], name="b.pdf")
+    third = make_pdf(tmp_path, [(40, 40, "票三")], name="c.pdf")
+    rows = [
+        make_row(first, id=1),
+        make_row(second, id=2),
+        make_row(third, id=3),
+    ]
+
+    result = write_group_pdfs(tmp_path / "out", rows)
+
+    group = result.groups[0]
+    assert group.source_pages == 3
+    assert group.pages == 2
+    with fitz.open(group.path) as document:
+        assert document.page_count == 2
+        for page in document:
+            assert page.rect.width == pytest.approx(A4_WIDTH)
+            assert page.rect.height == pytest.approx(A4_HEIGHT)
+        top = document[0].search_for("票一")
+        bottom = document[0].search_for("票二")
+        assert top and bottom
+        assert top[0].y1 <= A4_HEIGHT / 2
+        assert bottom[0].y0 >= A4_HEIGHT / 2
+        assert "票三" in document[1].get_text()
+        assert "票一" not in document[1].get_text()
 
 
 def test_shared_page_is_written_once_per_group(tmp_path: Path) -> None:
@@ -91,6 +123,7 @@ def test_shared_page_is_written_once_per_group(tmp_path: Path) -> None:
 
     assert len(result.groups) == 1
     assert result.groups[0].count == 2
+    assert result.groups[0].source_pages == 1
     assert result.groups[0].pages == 1
     assert page_texts(Path(result.groups[0].path)) == ["同页"]
 
@@ -105,6 +138,7 @@ def test_multi_page_source_keeps_only_requested_page(tmp_path: Path) -> None:
 
     result = write_group_pdfs(tmp_path / "out", rows)
 
+    assert result.groups[0].source_pages == 1
     assert result.groups[0].pages == 1
     assert page_texts(Path(result.groups[0].path)) == ["第二页"]
 
@@ -188,6 +222,7 @@ def test_missing_and_invalid_sources_are_skipped(tmp_path: Path) -> None:
     assert len(result.groups) == 1
     assert result.groups[0].category == "其他费用"
     assert result.groups[0].count == 3
+    assert result.groups[0].source_pages == 1
     assert result.groups[0].pages == 1
     assert any("missing.pdf" in item for item in result.skipped_missing)
     assert any("broken.pdf" in item for item in result.skipped_invalid)

@@ -43,7 +43,7 @@
             class="btn action export export-main"
             @click="exportEvidence"
             :disabled="!!busy"
-            title="一键导出证据包：Excel + 打印 PDF + 按公司/分类的无标注 PDF"
+            title="一键导出证据包：Excel + 打印 PDF + 按公司/分类的 A4 二合一无标注 PDF"
           >
             <span class="action-icon">↑</span> 导出
           </button>
@@ -64,7 +64,7 @@
             </button>
             <button class="export-item" :disabled="!!busy" @click="exportEvidenceFromMenu">
               <b>导出证据包（含分类 PDF）</b>
-              <span>发票明细 Excel + 二合一打印 PDF + 按公司/分类合并的无标注 PDF</span>
+              <span>发票明细 Excel + 二合一打印 PDF + 按公司/分类的 A4 二合一无标注 PDF</span>
             </button>
           </div>
         </div>
@@ -619,10 +619,10 @@
           </li>
         </ul>
         <div v-if="exportResult.groups && exportResult.groups.length" class="export-groups">
-          <div class="export-groups-title muted">按公司 / 分类拆分的 PDF（无标注）</div>
+          <div class="export-groups-title muted">按公司 / 分类拆分的 PDF（A4 二合一，无标注）</div>
           <div class="export-group-row" v-for="group in exportResult.groups" :key="group.path">
             <span class="ellipsis" :title="group.path">{{ group.company }} / {{ group.category }}</span>
-            <span class="muted">{{ group.count }} 张 · {{ group.pages }} 页</span>
+            <span class="muted">{{ group.count }} 张 · {{ group.pages }} 页 A4</span>
           </div>
         </div>
         <p v-if="exportResult.note" class="muted">{{ exportResult.note }}</p>

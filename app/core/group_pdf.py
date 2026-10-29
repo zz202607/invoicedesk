@@ -1,9 +1,11 @@
 """Merge invoice source pages into one clean PDF per company and category.
 
 Finance asks for one PDF per buyer company and, inside it, one PDF per
-category. These files are plain merged source pages: no labels, no sequence
-numbers, no invented cover page. The 2-up audit PDF in :mod:`app.core.print_pdf`
-keeps its labels; this module is for submission bundles.
+category. Each output sheet is A4 with two invoice pages stacked top and
+bottom, scaled to fit their half. No labels, no sequence numbers, no invented
+cover page — the 2-up audit PDF in :mod:`app.core.print_pdf` keeps its labels;
+this module is for submission bundles. The thin separator line between the two
+halves is a cutting guide, not a label.
 
 Source PDFs are opened read-only. A page shared by several rows in the same
 group is written once; the same page used by rows in different groups is
@@ -46,6 +48,13 @@ _RESERVED_NAMES = {
 }
 _CATEGORY_ORDER = {name: index for index, name in enumerate(CATEGORIES)}
 
+# A4 in points. Two source pages share one sheet, top half and bottom half.
+A4_WIDTH = 595.276
+A4_HEIGHT = 841.89
+MARGIN = 16.0
+GAP = 6.0
+SEPARATOR_COLOR = (0.75, 0.75, 0.75)
+
 
 @dataclass(frozen=True)
 class GroupPdfFile:
@@ -53,6 +62,7 @@ class GroupPdfFile:
     category: str
     count: int
     pages: int
+    source_pages: int
     path: str
 
 
@@ -118,6 +128,23 @@ def _category_key(category: str) -> tuple[int, int | str]:
 
 def _reference(row: ExportRow) -> str:
     return f"{row.source_name} p{row.page_index + 1}"
+
+
+def _slot_rect(slot: int) -> fitz.Rect:
+    slot_height = (A4_HEIGHT - 2 * MARGIN - GAP) / 2
+    y0 = MARGIN + slot * (slot_height + GAP)
+    return fitz.Rect(MARGIN, y0, A4_WIDTH - MARGIN, y0 + slot_height)
+
+
+def _draw_separator(page: fitz.Page) -> None:
+    slot_height = (A4_HEIGHT - 2 * MARGIN - GAP) / 2
+    y = MARGIN + slot_height + GAP / 2
+    page.draw_line(
+        (MARGIN, y),
+        (A4_WIDTH - MARGIN, y),
+        color=SEPARATOR_COLOR,
+        width=0.4,
+    )
 
 
 def _manifest_paths(directory: Path) -> list[str]:
@@ -196,14 +223,15 @@ def _merge_group(
     *,
     skipped_missing: list[str],
     skipped_invalid: list[str],
-) -> int:
-    """Write one group PDF; return the number of source pages written."""
+) -> tuple[int, int]:
+    """Write one group PDF; return (source pages, A4 sheets) written."""
     pages: dict[tuple[str, int], ExportRow] = {}
     for row in records:
         pages.setdefault((row.source_path, row.page_index), row)
 
     output = fitz.open()
     documents: dict[str, fitz.Document | None] = {}
+    sheet: fitz.Page | None = None
     placed = 0
     try:
         for (source_path, page_index), row in pages.items():
@@ -223,26 +251,32 @@ def _merge_group(
             if source is None or source.needs_pass or not 0 <= page_index < source.page_count:
                 skipped_invalid.append(reference)
                 continue
+            created = False
             try:
-                source_page = source[page_index]
-                page = output.new_page(
-                    width=source_page.rect.width,
-                    height=source_page.rect.height,
+                slot = placed % 2
+                if slot == 0:
+                    sheet = output.new_page(width=A4_WIDTH, height=A4_HEIGHT)
+                    created = True
+                if sheet is None:
+                    skipped_invalid.append(reference)
+                    continue
+                sheet.show_pdf_page(
+                    _slot_rect(slot), source, page_index, keep_proportion=True
                 )
-                page.show_pdf_page(
-                    page.rect, source, page_index, keep_proportion=True
-                )
+                if slot == 0:
+                    _draw_separator(sheet)
             except PDF_ERRORS:
-                if output.page_count:
+                if created and output.page_count:
                     with contextlib.suppress(*PDF_ERRORS):
                         output.delete_page(output.page_count - 1)
+                    sheet = None
                 skipped_invalid.append(reference)
                 continue
             placed += 1
 
         if not placed:
             # An empty group must not leave a zero-page PDF behind.
-            return 0
+            return 0, 0
         target.parent.mkdir(parents=True, exist_ok=True)
         temp = target.parent / f".{target.name}.{uuid4().hex[:8]}.tmp"
         try:
@@ -261,7 +295,7 @@ def _merge_group(
                 with contextlib.suppress(*PDF_ERRORS):
                     document.close()
         output.close()
-    return placed
+    return placed, (placed + 1) // 2
 
 
 def write_group_pdfs(
@@ -314,13 +348,13 @@ def write_group_pdfs(
             company_dir = target_dir / folder
             company_dirs[company] = company_dir
         path, relative = _unique_file(company_dir, category, used_names)
-        placed = _merge_group(
+        source_pages, sheets = _merge_group(
             path,
             records,
             skipped_missing=skipped_missing,
             skipped_invalid=skipped_invalid,
         )
-        if not placed:
+        if not source_pages:
             with contextlib.suppress(OSError):
                 path.unlink(missing_ok=True)
             continue
@@ -330,7 +364,8 @@ def write_group_pdfs(
                 company=company,
                 category=category,
                 count=len(records),
-                pages=placed,
+                pages=sheets,
+                source_pages=source_pages,
                 path=str(path),
             )
         )

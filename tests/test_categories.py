@@ -49,6 +49,26 @@ def test_mobile_ac_does_not_match_mobile_telecom() -> None:
     assert result.category == "其他费用"
 
 
+def test_hotel_meal_item_beats_hotel_seller() -> None:
+    result = categorize(
+        item_summary="餐饮服务",
+        seller_name="示例酒店管理有限公司",
+        file_name="sample-007.pdf",
+    )
+    assert result.category == "餐饮费"
+    assert result.rule == "item.meal"
+
+
+def test_hotel_lodging_item_stays_travel() -> None:
+    result = categorize(
+        item_summary="住宿服务",
+        seller_name="示例酒店管理有限公司",
+        file_name="sample-008.pdf",
+    )
+    assert result.category == "差旅费"
+    assert result.rule == "seller.hotel"
+
+
 def test_unknown_falls_back_to_other() -> None:
     result = categorize(item_summary="净水器", seller_name="某商行", file_name="sample-006.pdf")
     assert result.category == "其他费用"
