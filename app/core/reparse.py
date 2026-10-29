@@ -99,7 +99,7 @@ def reparse_unrecognized(
         row["invoice_id"]
         for row in connection.execute(
             "SELECT DISTINCT invoice_id FROM invoice_edits"
-            " WHERE field NOT IN ('review', 'warning')"
+            " WHERE field NOT IN ('review', 'warning', 'category_refresh')"
         )
     }
     rules = learning.seller_rules(connection)

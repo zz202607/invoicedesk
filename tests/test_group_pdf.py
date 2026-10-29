@@ -76,11 +76,39 @@ def test_groups_by_company_and_category_without_labels(tmp_path: Path) -> None:
     assert example_a.pages == 1
     company_dir = Path(example_a.path).parent
     assert company_dir.name == "示例甲公司"
-    assert Path(example_a.path).name == "差旅费.pdf"
+    assert Path(example_a.path).name == "差旅费-2.12元.pdf"
     # Two invoice pages share one A4 sheet; no label, sequence, or watermark
     # text is added anywhere.
     assert page_texts(Path(example_a.path)) == ["甲票内容\n乙票内容"]
     assert not (tmp_path / "out" / "发票二合一.pdf").exists()
+    # One merged file per company concatenates the category files.
+    by_company = {item.company: item for item in result.merged}
+    assert by_company["示例甲公司"].count == 2
+    assert Path(by_company["示例甲公司"].path).name == "总合并-2.12元.pdf"
+    assert page_texts(Path(by_company["示例甲公司"].path)) == ["甲票内容\n乙票内容"]
+    assert by_company["示例乙公司"].count == 1
+
+
+def test_same_category_and_total_in_two_companies_keep_plain_names(
+    tmp_path: Path,
+) -> None:
+    first = make_pdf(tmp_path, [(40, 40, "甲票")], name="a.pdf")
+    second = make_pdf(tmp_path, [(40, 40, "乙票")], name="b.pdf")
+    rows = [
+        make_row(first, id=1, category="差旅费"),
+        make_row(second, id=2, buyer_name="示例乙公司", category="差旅费"),
+    ]
+
+    result = write_group_pdfs(tmp_path / "out", rows)
+
+    # Uniqueness is scoped to each company folder, so neither company's file
+    # gains a spurious "(3)" suffix just because the other has the same name.
+    by_company = {group.company: group for group in result.groups}
+    assert Path(by_company["示例甲公司"].path).name == "差旅费-1.06元.pdf"
+    assert Path(by_company["示例乙公司"].path).name == "差旅费-1.06元.pdf"
+    merged = {item.company: item for item in result.merged}
+    assert Path(merged["示例甲公司"].path).name == "总合并-1.06元.pdf"
+    assert Path(merged["示例乙公司"].path).name == "总合并-1.06元.pdf"
 
 
 def test_group_pdf_uses_a4_sheets_with_two_pages_each(tmp_path: Path) -> None:
@@ -110,6 +138,36 @@ def test_group_pdf_uses_a4_sheets_with_two_pages_each(tmp_path: Path) -> None:
         assert bottom[0].y0 >= A4_HEIGHT / 2
         assert "票三" in document[1].get_text()
         assert "票一" not in document[1].get_text()
+
+
+def test_merged_pdf_follows_category_order(tmp_path: Path) -> None:
+    other = make_pdf(tmp_path, [(40, 40, "其他内容")], name="other.pdf")
+    travel = make_pdf(tmp_path, [(40, 40, "差旅内容")], name="travel.pdf")
+    meal = make_pdf(tmp_path, [(40, 40, "餐饮内容")], name="meal.pdf")
+    # Deliberately input order: 其他, 差旅, 餐饮. Output must use the taxonomy
+    # order 差旅 → 餐饮 → 其他 regardless of row order.
+    rows = [
+        make_row(other, id=1, category="其他费用"),
+        make_row(travel, id=2, category="差旅费"),
+        make_row(meal, id=3, category="餐饮费"),
+    ]
+
+    result = write_group_pdfs(tmp_path / "out", rows)
+
+    assert [group.category for group in result.groups] == [
+        "差旅费",
+        "餐饮费",
+        "其他费用",
+    ]
+    merged = result.merged[0]
+    assert Path(merged.path).name == "总合并-3.18元.pdf"
+    assert page_texts(Path(merged.path)) == [
+        "差旅内容",
+        "餐饮内容",
+        "其他内容",
+    ]
+    assert merged.pages == 3
+    assert merged.source_pages == 3
 
 
 def test_shared_page_is_written_once_per_group(tmp_path: Path) -> None:
@@ -203,7 +261,7 @@ def test_empty_buyer_and_category_get_explicit_names(tmp_path: Path) -> None:
 
     assert result.groups[0].company == UNKNOWN_COMPANY
     assert result.groups[0].category == UNKNOWN_CATEGORY
-    assert Path(result.groups[0].path).name == f"{UNKNOWN_CATEGORY}.pdf"
+    assert Path(result.groups[0].path).name == f"{UNKNOWN_CATEGORY}-1.06元.pdf"
 
 
 def test_missing_and_invalid_sources_are_skipped(tmp_path: Path) -> None:
@@ -238,8 +296,10 @@ def test_rexport_removes_stale_generated_pdfs_but_keeps_user_files(
         output,
         [make_row(old_source, buyer_name="旧公司", category="差旅费")],
     )
-    stale = output / "旧公司" / "差旅费.pdf"
+    stale = output / "旧公司" / "差旅费-1.06元.pdf"
+    stale_merge = output / "旧公司" / "总合并-1.06元.pdf"
     assert stale.is_file()
+    assert stale_merge.is_file()
     user_file = output / "我的说明.pdf"
     user_file.write_text("keep me", encoding="utf-8")
 
@@ -249,10 +309,14 @@ def test_rexport_removes_stale_generated_pdfs_but_keeps_user_files(
     )
 
     assert not stale.exists()
+    assert not stale_merge.exists()
     assert not (output / "旧公司").exists()
     assert user_file.is_file()
     manifest = json.loads((output / MANIFEST_NAME).read_text(encoding="utf-8"))
-    assert manifest["files"] == ["新公司/餐饮费.pdf"]
+    assert manifest["files"] == [
+        "新公司/总合并-1.06元.pdf",
+        "新公司/餐饮费-1.06元.pdf",
+    ]
 
 
 def test_unsafe_and_reserved_names_are_sanitized(tmp_path: Path) -> None:
@@ -265,7 +329,7 @@ def test_unsafe_and_reserved_names_are_sanitized(tmp_path: Path) -> None:
 
     path = Path(result.groups[0].path)
     assert path.parent.name == "_CON"
-    assert path.name == "差旅_费_______.pdf"
+    assert path.name == "差旅_费_______-1.06元.pdf"
 
 
 def test_symlink_output_directory_is_refused(tmp_path: Path) -> None:

@@ -614,7 +614,7 @@ input[type="checkbox"] {
 
 .invoice-table {
   table-layout: fixed;
-  min-width: 860px;
+  min-width: 980px;
 }
 
 .invoice-table th:nth-child(1) {
@@ -626,23 +626,27 @@ input[type="checkbox"] {
 }
 
 .invoice-table th:nth-child(3) {
-  width: 178px;
+  width: 168px;
 }
 
 .invoice-table th:nth-child(4) {
-  width: auto;
+  width: 148px;
 }
 
 .invoice-table th:nth-child(5) {
-  width: 104px;
+  width: auto;
 }
 
 .invoice-table th:nth-child(6) {
-  width: 106px;
+  width: 100px;
 }
 
 .invoice-table th:nth-child(7) {
-  width: 152px;
+  width: 124px;
+}
+
+.invoice-table th:nth-child(8) {
+  width: 160px;
 }
 
 .invoice-table tbody tr {
@@ -692,6 +696,27 @@ input[type="checkbox"] {
   border: 1px solid var(--line);
   font-size: 11px;
   color: var(--muted);
+}
+
+.clickable-tag {
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: inherit;
+}
+
+.clickable-tag:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.category-select {
+  width: 100%;
+  padding: 1px 4px;
+  font-size: 12px;
+  border-radius: 7px;
 }
 
 .badge {

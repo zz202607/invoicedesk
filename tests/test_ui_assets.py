@@ -56,6 +56,22 @@ def test_invoice_corrections_are_wired_and_auditable() -> None:
     assert "confirm_invoice" in script
 
 
+def test_pool_shows_company_and_quick_category_editing() -> None:
+    """Imported rows must expose buyer company and a one-click category fix."""
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    assert "row.buyer_name" in html
+    assert "购买方（发票抬头公司）" in html
+    assert "startCategoryEdit" in html
+    assert "startCategoryEdit" in script
+    assert "commitCategory" in script
+    assert "categoryChoices" in script
+    assert "update_invoice" in script
+    # A successful import switches the pool to the new batch and reopens it.
+    assert "String(data.batch_id)" in script
+    assert "this.poolVisible = true" in script
+
+
 def test_rule_management_is_wired_to_the_bridge() -> None:
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "app.js").read_text(encoding="utf-8")

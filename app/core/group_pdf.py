@@ -1,10 +1,13 @@
 """Merge invoice source pages into one clean PDF per company and category.
 
 Finance asks for one PDF per buyer company and, inside it, one PDF per
-category. Each output sheet is A4 with two invoice pages stacked top and
-bottom, scaled to fit their half. No labels, no sequence numbers, no invented
-cover page — the 2-up audit PDF in :mod:`app.core.print_pdf` keeps its labels;
-this module is for submission bundles. The thin separator line between the two
+category. Each category file is named ``<category>-<amount>元.pdf`` so the
+amount is visible without opening it, and each company also gets one
+``总合并-<amount>元.pdf`` that concatenates the category files in taxonomy
+order. Each output sheet is A4 with two invoice pages stacked top and bottom,
+scaled to fit their half. No labels, no sequence numbers, no invented cover
+page — the 2-up audit PDF in :mod:`app.core.print_pdf` keeps its labels; this
+module is for submission bundles. The thin separator line between the two
 halves is a cutting guide, not a label.
 
 Source PDFs are opened read-only. A page shared by several rows in the same
@@ -61,6 +64,19 @@ class GroupPdfFile:
     company: str
     category: str
     count: int
+    total_cents: int
+    pages: int
+    source_pages: int
+    path: str
+
+
+@dataclass(frozen=True)
+class CompanyPdfFile:
+    """One company's merged PDF: every category file, in taxonomy order."""
+
+    company: str
+    count: int
+    total_cents: int
     pages: int
     source_pages: int
     path: str
@@ -70,6 +86,7 @@ class GroupPdfFile:
 class GroupPdfResult:
     directory: str
     groups: tuple[GroupPdfFile, ...]
+    merged: tuple[CompanyPdfFile, ...]
     skipped_missing: tuple[str, ...]
     skipped_invalid: tuple[str, ...]
 
@@ -202,10 +219,22 @@ def _write_manifest(directory: Path, files: Iterable[str]) -> None:
             temp.unlink(missing_ok=True)
 
 
+def _yuan(cents: int) -> str:
+    return f"{cents / 100:.2f}"
+
+
+def _category_stem(category: str, total_cents: int) -> str:
+    return f"{category}-{_yuan(total_cents)}元"
+
+
+def _merge_stem(total_cents: int) -> str:
+    return f"总合并-{_yuan(total_cents)}元"
+
+
 def _unique_file(
-    company_dir: Path, category: str, used: set[str]
+    company_dir: Path, stem: str, used: set[str]
 ) -> tuple[Path, str]:
-    base = _safe_name(category)
+    base = _safe_name(stem)
     suffix = 2
     while True:
         name = f"{base}.pdf" if suffix == 2 else f"{base} ({suffix}).pdf"
@@ -298,13 +327,51 @@ def _merge_group(
     return placed, (placed + 1) // 2
 
 
+def _merge_pdfs(target: Path, sources: Sequence[Path]) -> int:
+    """Concatenate already-written category PDFs in the given order."""
+    output = fitz.open()
+    pages = 0
+    try:
+        for source_path in sources:
+            try:
+                with fitz.open(str(source_path)) as source:
+                    output.insert_pdf(source)
+            except PDF_ERRORS as exc:
+                raise ExportError(
+                    "无法合并分类 PDF，请确认输出目录可读。"
+                ) from exc
+        pages = output.page_count
+        if not pages:
+            return 0
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp = target.parent / f".{target.name}.{uuid4().hex[:8]}.tmp"
+        try:
+            output.save(str(temp), garbage=3, deflate=True)
+            os.replace(temp, target)
+        except PDF_ERRORS as exc:
+            raise ExportError(
+                "无法写入总合并 PDF，请确认输出目录可写且文件未被占用。"
+            ) from exc
+        finally:
+            if temp.exists():
+                temp.unlink(missing_ok=True)
+    finally:
+        output.close()
+    return pages
+
+
 def write_group_pdfs(
     directory: str | Path,
     rows: Sequence[ExportRow],
     *,
     fallback_company: str = "",
 ) -> GroupPdfResult:
-    """Write one label-free merged PDF per (company, category).
+    """Write one label-free PDF per (company, category) plus one merged PDF.
+
+    Category files are named ``<category>-<amount>元.pdf``. Each company's
+    ``总合并-<amount>元.pdf`` concatenates every written category file in
+    taxonomy order, so cutting apart the 2-up sheets is not needed to hand the
+    bundle over as one document.
 
     Previous outputs listed in ``.manifest.json`` are removed first, so a
     re-export never leaves a stale company or category PDF behind. Groups that
@@ -329,8 +396,13 @@ def write_group_pdfs(
     )
     company_dirs: dict[str, Path] = {}
     used_dirs: set[str] = set()
-    used_names: set[str] = set()
+    # Names only need to be unique inside one company folder: two companies can
+    # both have ``差旅费-100.00元.pdf`` without one getting a spurious suffix.
+    used_names: dict[str, set[str]] = {}
     written: list[GroupPdfFile] = []
+    merged: list[CompanyPdfFile] = []
+    company_files: dict[str, list[Path]] = {}
+    company_records: dict[str, list[ExportRow]] = {}
     manifest: list[str] = []
     skipped_missing: list[str] = []
     skipped_invalid: list[str] = []
@@ -347,7 +419,14 @@ def write_group_pdfs(
             used_dirs.add(folder.casefold())
             company_dir = target_dir / folder
             company_dirs[company] = company_dir
-        path, relative = _unique_file(company_dir, category, used_names)
+            company_files[company] = []
+            company_records[company] = []
+        total_cents = sum(row.amount_total_cents or 0 for row in records)
+        path, relative = _unique_file(
+            company_dir,
+            _category_stem(category, total_cents),
+            used_names.setdefault(company, set()),
+        )
         source_pages, sheets = _merge_group(
             path,
             records,
@@ -359,13 +438,47 @@ def write_group_pdfs(
                 path.unlink(missing_ok=True)
             continue
         manifest.append(relative)
+        company_files[company].append(path)
+        company_records[company].extend(records)
         written.append(
             GroupPdfFile(
                 company=company,
                 category=category,
                 count=len(records),
+                total_cents=total_cents,
                 pages=sheets,
                 source_pages=source_pages,
+                path=str(path),
+            )
+        )
+
+    for company, sources in company_files.items():
+        if not sources:
+            continue
+        records = company_records[company]
+        total_cents = sum(row.amount_total_cents or 0 for row in records)
+        path, relative = _unique_file(
+            company_dirs[company],
+            _merge_stem(total_cents),
+            used_names[company],
+        )
+        pages = _merge_pdfs(path, sources)
+        if not pages:
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+            continue
+        manifest.append(relative)
+        merged.append(
+            CompanyPdfFile(
+                company=company,
+                count=len(records),
+                total_cents=total_cents,
+                pages=pages,
+                source_pages=sum(
+                    group.source_pages
+                    for group in written
+                    if group.company == company
+                ),
                 path=str(path),
             )
         )
@@ -374,6 +487,7 @@ def write_group_pdfs(
     return GroupPdfResult(
         directory=str(target_dir),
         groups=tuple(written),
+        merged=tuple(merged),
         skipped_missing=tuple(skipped_missing),
         skipped_invalid=tuple(skipped_invalid),
     )

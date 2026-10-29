@@ -923,11 +923,23 @@ class Api:
                     "company": group.company,
                     "category": group.category,
                     "count": group.count,
+                    "total": _money(group.total_cents),
                     "pages": group.pages,
                     "source_pages": group.source_pages,
                     "path": group.path,
                 }
                 for group in groups.groups
+            ],
+            "merged": [
+                {
+                    "company": merged.company,
+                    "count": merged.count,
+                    "total": _money(merged.total_cents),
+                    "pages": merged.pages,
+                    "source_pages": merged.source_pages,
+                    "path": merged.path,
+                }
+                for merged in groups.merged
             ],
             "count": summary.count,
             "review_count": summary.review_count,

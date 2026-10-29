@@ -238,7 +238,7 @@ def _group(rows: Sequence[ExportRow], key: Callable[[ExportRow], str], fallback:
 def _write_category_summary(
     worksheet: Worksheet, rows: Sequence[ExportRow], summary: ExportSummary
 ) -> None:
-    headers = ("分类", "张数", "不含税金额", "税额", "价税合计", "占比")
+    headers = ("分类", "张数", "不含税金额", "税额", "价税合计", "价税合计（大写）", "占比")
     _write_header(worksheet, headers)
     groups = _group(rows, lambda row: row.category, "未分类")
     ordered = sorted(groups.items(), key=lambda item: (-item[1]["total"], item[0]))
@@ -250,13 +250,16 @@ def _write_category_summary(
         _set_money(worksheet.cell(row=index, column=3), aggregate["net"])
         _set_money(worksheet.cell(row=index, column=4), aggregate["tax"])
         _set_money(worksheet.cell(row=index, column=5), aggregate["total"])
-        share = worksheet.cell(row=index, column=6)
+        upper = worksheet.cell(row=index, column=6)
+        _set_literal(upper, chinese_upper_cents(aggregate["total"]), limit=200)
+        upper.alignment = Alignment(horizontal="left", vertical="top")
+        share = worksheet.cell(row=index, column=7)
         share.value = (
             aggregate["total"] / summary.total_cents if summary.total_cents else 0.0
         )
         share.number_format = "0.0%"
         share.alignment = MONEY_ALIGN
-        for column in range(1, 7):
+        for column in range(1, 8):
             cell = worksheet.cell(row=index, column=column)
             cell.border = BORDER
             cell.font = BODY_FONT
@@ -274,28 +277,20 @@ def _write_category_summary(
         _set_money(cell, cents)
         cell.font = BOLD_FONT
         cell.border = TOP_BORDER
-    share = worksheet.cell(row=total_row, column=6)
+    upper_total = worksheet.cell(row=total_row, column=6)
+    _set_literal(upper_total, chinese_upper_cents(summary.total_cents), limit=200)
+    upper_total.font = BOLD_FONT
+    upper_total.alignment = Alignment(horizontal="left", vertical="top")
+    upper_total.border = TOP_BORDER
+    share = worksheet.cell(row=total_row, column=7)
     share.value = 1.0 if summary.total_cents else 0.0
     share.number_format = "0.0%"
     share.font = BOLD_FONT
     share.alignment = MONEY_ALIGN
     share.border = TOP_BORDER
 
-    upper_row = total_row + 1
-    upper_label = worksheet.cell(row=upper_row, column=1)
-    _set_literal(upper_label, "价税合计（大写）")
-    upper_label.font = BOLD_FONT
-    upper_label.border = TOP_BORDER
-    upper_value = worksheet.cell(row=upper_row, column=2)
-    _set_literal(upper_value, chinese_upper_cents(summary.total_cents), limit=200)
-    upper_value.font = BOLD_FONT
-    upper_value.alignment = Alignment(horizontal="left", vertical="top")
-    worksheet.merge_cells(
-        start_row=upper_row, start_column=2, end_row=upper_row, end_column=6
-    )
-
-    worksheet.auto_filter.ref = f"A1:F{len(groups) + 1}"
-    _finish_sheet(worksheet, (18, 10, 15, 14, 15, 10))
+    worksheet.auto_filter.ref = f"A1:G{len(groups) + 1}"
+    _finish_sheet(worksheet, (18, 10, 15, 14, 15, 30, 10))
 
 
 def _write_buyer_summary(

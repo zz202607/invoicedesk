@@ -210,7 +210,8 @@ def list_invoices(
         " i.needs_review,"
         " (SELECT COUNT(*) FROM invoice_edits e"
         "  WHERE e.invoice_id = i.id"
-        "  AND e.field NOT IN ('review', 'warning')) AS edit_count"
+        "  AND e.field NOT IN ('review', 'warning', 'category_refresh'))"
+        " AS edit_count"
         " FROM invoices i JOIN batches b ON b.id = i.batch_id"
     )
     if where:

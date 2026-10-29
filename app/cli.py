@@ -490,6 +490,15 @@ def _run_export(args: argparse.Namespace) -> int:
                 f"：{group.count} 张、{group.source_pages} 张票面 / "
                 f"{group.pages} 张 A4 → {group.path}"
             )
+    if group_info.merged:
+        print(
+            f"总合并 PDF（按分类顺序）：{len(group_info.merged)} 个"
+        )
+        for merged in group_info.merged:
+            print(
+                f"  {merged.company}"
+                f"：{merged.count} 张、{merged.pages} 张 A4 → {merged.path}"
+            )
     _print_skipped("缺少源文件", print_info.skipped_missing)
     _print_skipped("无法打开票面", print_info.skipped_invalid)
     _print_skipped("分类 PDF 缺少源文件", group_info.skipped_missing)

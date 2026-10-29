@@ -105,9 +105,11 @@ def test_export_end_to_end_writes_excel_and_pdf(tmp_path: Path, capsys) -> None:
     assert float(categories["E2"].value) == 1060.0
     assert categories["A3"].value == "餐饮费"
     assert float(categories["E3"].value) == 88.0
+    assert categories["F3"].value == "捌拾捌元整"
     assert categories["B4"].value == 2
     assert float(categories["E4"].value) == 1148.0
-    assert float(categories["F4"].value) == 1.0
+    assert categories["F4"].value == "壹仟壹佰肆拾捌元整"
+    assert float(categories["G4"].value) == 1.0
 
     buyers = workbook["公司汇总"]
     assert buyers["A2"].value == "示例甲公司"
@@ -140,11 +142,14 @@ def test_export_end_to_end_writes_excel_and_pdf(tmp_path: Path, capsys) -> None:
         document.close()
 
     group_dir = output / "发票分组"
-    assert (group_dir / "示例甲公司" / "差旅费.pdf").is_file()
-    assert (group_dir / "示例乙公司" / "餐饮费.pdf").is_file()
+    assert (group_dir / "示例甲公司" / "差旅费-1060.00元.pdf").is_file()
+    assert (group_dir / "示例乙公司" / "餐饮费-88.00元.pdf").is_file()
+    assert (group_dir / "示例甲公司" / "总合并-1060.00元.pdf").is_file()
+    assert (group_dir / "示例乙公司" / "总合并-88.00元.pdf").is_file()
     assert "分类 PDF" in captured.out
     assert "示例甲公司 / 差旅费" in captured.out
-    grouped = fitz.open(group_dir / "示例甲公司" / "差旅费.pdf")
+    assert "总合并 PDF" in captured.out
+    grouped = fitz.open(group_dir / "示例甲公司" / "差旅费-1060.00元.pdf")
     try:
         # Clean merge: only the invoice text, no sequence/label header.
         assert "示例乙酒店" in grouped[0].get_text()
