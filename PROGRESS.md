@@ -1,7 +1,7 @@
 # 发票管家（InvoiceDesk）· PROGRESS
 
 > 最后更新：2026-10-29
-> 当前阶段：**Phase 3d 及补丁（A4 分类 PDF、餐费规则、新单清池）与导出修订（规则版本回填、分类金额命名、总合并、分类汇总大写）已实现**；待 PR 与实机验收
+> 当前阶段：**Phase 3d 及补丁（A4 分类 PDF、餐费规则、新单清池）与导出修订（规则版本回填、分类金额命名、总合并、分类汇总大写）已实现**；PR #10 已开、CI 全绿，待实机验收与 _ming 确认合并
 > 分支：`main` · 仓库：[invoicedesk](https://github.com/zz202607/invoicedesk)（public）
 
 ## 现在
