@@ -43,8 +43,8 @@
   `open_output_folder` 仅允许 export/report。
 - 打包（3a）：PyInstaller one-dir，冻结态 DB/out/logs 在 `%LOCALAPPDATA%\InvoiceDesk`；滚动日志、
   异常钩子、WebView2 检测、`--smoke` 自检；实测 64.1MB，smoke exit 0。
-- 合并：私有 PR #2–#8（见 `docs/journal`）；公开 #1–#7、#10 均 CI 全绿并经 _ming 确认；3e 在
-  PR #11（CI 全绿，待 _ming 确认合并）。
+- 合并：私有 PR #2–#8（见 `docs/journal`）；公开 #1–#7、#10、#11 均 CI 全绿并经 _ming 确认；3e 已随 PR #11 合并
+  （`efaf88c`）。
 - 审查：2b/2c/2d/2e 多轮修复异常路径、回滚、TOCTOU、LIKE 转义、CSP、并发写；本地测试/CI 绿。
 - OCR（3c）：`app/core/ocr.py` 用随包 RapidOCR（ONNX，离线）识别无文本层页，OCR 行喂给同一
   几何解析器；票号/日期/双方/金额/项目共用校验；红章遮「普通」时按票号兜底票型；买卖方按
