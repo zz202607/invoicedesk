@@ -78,8 +78,6 @@
   UI 渲染未测；CSP 仍含 `unsafe-eval` 且页面以 `file://` 加载，加固路线见 `docs/IDEAS.md`。
 - 本机 python_env 的 `_pth` 使 `python -m app` 找不到包，改用 `python run.py`；Python 3.13 venv
   访问 PyPI 会 SSL EOF；本地校验用 `python_env`，CI 使用 GitHub 标准环境。
-- 本地 main 的 PR #3 记录提交未推送：`git push` 两次报 `Recv failure: Connection was reset`，
-  下次会话第一件事先 push，再复验导出结果弹窗。
 
 ## 链接
 
