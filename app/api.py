@@ -21,7 +21,7 @@ from typing import Any
 from uuid import uuid4
 
 from app import __version__
-from app.core import db, importer, invoices, learning, reports, workbench
+from app.core import db, importer, invoices, learning, reports, runtime, workbench
 from app.core.categories import CATEGORIES, DEFAULT_CATEGORY
 from app.core.excel_export import EXCEL_FILENAME, write_workbook
 from app.core.export import (
@@ -353,8 +353,12 @@ class Api:
         out_dir: str | Path | None = None,
         folder_dialog: Callable[[str], str | None] | None = None,
     ) -> None:
-        self._db_path = Path(db_path) if db_path is not None else db.DEFAULT_DB_PATH
-        self._out_dir = Path(out_dir) if out_dir is not None else Path("out")
+        self._db_path = (
+            Path(db_path) if db_path is not None else runtime.default_db_path()
+        )
+        self._out_dir = (
+            Path(out_dir) if out_dir is not None else runtime.default_out_dir()
+        )
         self._folder_dialog = folder_dialog
         self._preview_cache: dict[tuple[int, float], str] = {}
         self._lock = threading.RLock()
@@ -370,7 +374,7 @@ class Api:
         reason = output_path_reason(target)
         if reason is not None:
             raise ReportError(
-                f"输出路径{reason}，财务数据只允许保存在本机固定盘或仓库的 out/、data/ 下。"
+                f"输出路径{reason}，财务数据只允许保存在本机固定盘。"
             )
         target.mkdir(parents=True, exist_ok=True)
         return target

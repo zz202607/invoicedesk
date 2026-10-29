@@ -2,9 +2,9 @@
 
 本地离线的发票整理与报销单生成工具。把一叠 PDF 发票拖进来，自动解析、人工核对、一键导出可以直接提交的《费用报销支出明细表》和分类打印 PDF。
 
-> 当前状态：**Phase 2e 导入文件夹选择已合并** — 解析引擎、SQLite 数据层、导入去重、
-> 发票级导出、报销行与报销单 Excel、桌面工作台、字段修正、规则管理与文件夹选择已实现；
-> 汇总仪表盘待做，见 [ROADMAP.md](ROADMAP.md)。
+> 当前状态：**Phase 3a 打包已可用** — 解析引擎、SQLite 数据层、导入去重、发票级导出、
+> 报销行与报销单 Excel、桌面工作台、字段修正、规则管理、汇总看板与 PyInstaller 单目录包
+> 已实现；首次启动向导与自动备份待做，见 [ROADMAP.md](ROADMAP.md)。
 
 ## 解决什么问题
 
@@ -132,6 +132,28 @@ Excel 明细含票型、低置信字段、待确认、识别警告和来源文�
 
 尚未实现：费用额度看板（需要录入当月收入，排在 Phase 4）、多页/多票自动拆分、Tabulator/ECharts。
 阈值与计划见 ROADMAP，决策见 docs/DECISIONS.md。
+
+### Windows 打包版（Phase 3a）
+
+```bash
+python -m pip install -r requirements-build.txt
+python tools/build_app.py
+```
+
+产物是 `dist/InvoiceDesk/InvoiceDesk.exe`（one-dir，约 64 MB，含 UI 与依赖），分发时要复制
+整个 `dist\InvoiceDesk` 文件夹，不能只拷贝 exe；构建同时生成 `build/icon.ico`。构建脚本先用
+标准库生成多尺寸图标，再跑 PyInstaller，最后用
+`InvoiceDesk.exe --smoke` 在临时目录验证 UI 资源、WebView2 与数据库初始化；任一检查失败都会让
+构建返回非零。`--skip-build` / `--skip-smoke` 可复用现有产物或只构建。
+
+打包版要求 Windows 装有 **Microsoft Edge WebView2 Runtime**；缺失时程序弹窗给出下载地址并退出，
+不会静默失败。数据默认放在 `%LOCALAPPDATA%\InvoiceDesk\`：`invoicedesk.db`、`out\` 导出目录、
+`logs\invoicedesk.log`（滚动 1 MB × 3 份）。不再写入安装目录，升级/重装不会覆盖数据；可用
+`INVOICEDESK_HOME` 改整个根目录，`INVOICEDESK_DB` / `INVOICEDESK_OUT` 单独覆盖数据库与导出目录。
+源码运行时仍使用仓库内 `data/` 与 `out/`。
+
+窗口版没有控制台；启动失败和未捕获异常会写入本地日志并弹窗。构建产物未签名，首次运行可能触发
+SmartScreen 提示；只在本机/内网分发，不要把含真实发票的数据库或导出文件提交或上传。
 
 ## 文档
 

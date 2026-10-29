@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from app import __version__
 from app.api import Api
-from app.main import main
+from app.main import main, run_smoke
 
 
 class FakeNative:
@@ -162,3 +165,56 @@ def test_folder_picker_timeout_and_dialog_errors(monkeypatch) -> None:
     response = api.pick_folder("")
     assert response["ok"] is False
     assert "无法打开文件夹选择器" in response["error"]
+
+
+def test_smoke_checks_bundle_and_writes_a_report(monkeypatch, tmp_path) -> None:
+    report = tmp_path / "smoke.json"
+    monkeypatch.setenv("INVOICEDESK_SMOKE_REPORT", str(report))
+    # CI runners are not the target machine; the real build smoke still checks it.
+    monkeypatch.setattr("app.main.runtime.webview2_available", lambda: True)
+    assert run_smoke() == 0
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["ok"] is True
+    assert data["version"] == __version__
+    assert data["checks"]["database"] is True
+    assert data["checks"]["ui_assets"] is True
+    assert data["checks"]["version"] is True
+
+
+def test_smoke_fails_when_ui_assets_are_missing(monkeypatch, tmp_path) -> None:
+    report = tmp_path / "smoke.json"
+    monkeypatch.setenv("INVOICEDESK_SMOKE_REPORT", str(report))
+    monkeypatch.setattr(
+        "app.main.runtime.resource_path", lambda relative: tmp_path / "missing"
+    )
+    assert run_smoke() == 1
+    data = json.loads(report.read_text(encoding="utf-8"))
+    assert data["ok"] is False
+    assert data["checks"]["ui_assets"] is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="startup guard is Windows-only")
+def test_missing_webview2_stops_launch_with_a_dialog(monkeypatch) -> None:
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(sys, "argv", ["InvoiceDesk"])
+    monkeypatch.delenv("INVOICEDESK_SMOKE", raising=False)
+    monkeypatch.setattr("app.main.runtime.webview2_available", lambda: False)
+    monkeypatch.setattr("app.main.logs.setup_logging", lambda path, **kwargs: None)
+    monkeypatch.setattr(
+        "app.main.logs.install_exception_hooks", lambda target, box: None
+    )
+
+    assert main(None, message_box=lambda title, text: messages.append((title, text))) == 2
+    assert messages
+    assert "WebView2" in messages[0][1]
+
+
+def test_start_failure_is_reported_without_a_traceback_dialog() -> None:
+    class BrokenWebview(FakeWebview):
+        def start(self, **kwargs) -> None:
+            raise RuntimeError("boom")
+
+    messages: list[tuple[str, str]] = []
+    assert main(BrokenWebview(), message_box=lambda title, text: messages.append((title, text))) == 1
+    assert messages
+    assert "启动失败" in messages[0][1]

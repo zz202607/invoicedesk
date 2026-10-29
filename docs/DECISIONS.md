@@ -126,3 +126,10 @@
 - **决定**：新增 `theme.js`，在样式表之前同步解析 auto/light/dark，把结果写到 `<html data-theme>`；auto 监听 `prefers-color-scheme`；手动模式尽力写入 `localStorage`（`private_mode` 可能清空，故不承诺跨启动持久化），存储异常不影响会话内切换；CSS 只有 `:root[data-theme="dark"]` 一套深色 token，不再重复媒体查询。快捷键挂在 document：Esc 关闭最上层弹窗/票面；Ctrl+K 聚焦搜索、Ctrl+I 导入、Ctrl+E 导出、Ctrl+B 显示/隐藏发票池、Ctrl+D 汇总看板、Ctrl+Enter 保存票面修正、Ctrl+Shift+D 循环外观、F1 帮助；弹窗打开时动作快捷键不触发，Esc 与外观仍可用，F1 只在无弹窗时打开帮助。主窗口改为 `maximized=True`（默认 1200×800，最小 1024×640），由系统工作区决定实际尺寸，避免 WebView 视口大于窗口。
 - **替代**：把外观存进数据库设置表（为单个 UI 偏好加 schema 迁移）；仅跟随系统（不满足手动开关）；保留固定窗口（小屏裁切工具栏）；给快捷键做全局注册（WebView2 无此需求）。
 - **重新评估**：用户要求外观跨启动保留时增加 settings 表；pywebview 修复 Windows DPI/窗口尺寸映射后可去掉最大化兜底；快捷键与输入法/浏览器冲突时再调整组合。
+
+## ADR-019 打包运行位置、日志与启动防护
+
+- **背景**：Phase 2 只有源码运行；给非开发用户需要双击 exe。安装目录可能只读且升级会整目录替换；窗口版没有控制台，启动失败不可见；目标机器可能缺少 WebView2。
+- **决定**：PyInstaller 用 one-dir（启动快、不必每次解压），UI 作为 datas 放到 `app/ui`，`runtime.resource_path` 兼容 `_MEIPASS`。冻结态默认根目录 `%LOCALAPPDATA%\InvoiceDesk`（`invoicedesk.db`、`out\`、`logs\`）；源码态保持 `data/`、`out/`。`INVOICEDESK_HOME` 覆盖根目录，`INVOICEDESK_DB` / `INVOICEDESK_OUT` 单独覆盖；所有路径仍走 `db.connect` 与 `output_path_reason` 守卫。日志用 RotatingFileHandler（1 MB × 3），冻结态 stdout/stderr 为 None 时重定向到日志；sys/threading excepthook 记录异常并按需弹窗。启动前只读注册表查询 Evergreen WebView2 GUID；缺失则 MessageBoxW 给出下载地址并返回 2，`create_window`/`start` 失败同样弹窗并写日志；不自动联网下载。`--smoke` 用临时库检查 UI 资源、WebView2 与 bootstrap 版本，构建脚本据此判定失败。图标由标准库 `tools/make_icon.py` 绘制多尺寸 ICO，不引入 Pillow。
+- **替代**：one-file（每次启动解压慢、临时目录更大）；数据放安装目录（只读/升级丢数据）；只靠控制台报错（窗口版看不到）；自动下载 WebView2（联网行为未授权）；Pillow 画图标（为一张图增加依赖）。
+- **重新评估**：需要绿色便携版时把 `INVOICEDESK_HOME` 指到 U 盘；改为固定版本 WebView2 分发时补充检测；构建体积/时间影响发布时再评估 UPX 或裁剪依赖。
