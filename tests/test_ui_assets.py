@@ -167,7 +167,7 @@ def test_import_and_export_are_prominent_and_wired() -> None:
     # Both are primary quick actions in the top bar, with the export choices
     # reachable from one visible menu.
     assert 'class="btn action import"' in html
-    assert 'class="btn action export"' in html
+    assert 'class="btn action export export-main"' in html
     assert "导出报销单" in html
     assert "导出证据包" in html
     assert "exportReportFromMenu" in script
@@ -202,3 +202,30 @@ def test_reparse_action_is_wired_to_the_bridge() -> None:
     assert "重新识别未识别" in html
     assert "reparseUnrecognized" in script
     assert "reparse_unrecognized" in script
+    # Old scanned records are recoverable with one click from a visible banner,
+    # and the pool can be filtered down to rows still awaiting OCR.
+    assert "一键重新识别" in html
+    assert "仅未识别" in html
+    assert "unrecognized_only" in script
+
+
+def test_one_click_export_and_arrow_navigation_are_wired() -> None:
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    css = (UI / "styles.css").read_text(encoding="utf-8")
+    # The main export button runs the evidence package directly; the caret
+    # still opens the menu for the report-only export.
+    assert 'class="btn action export export-main"' in html
+    assert '@click="exportEvidence"' in html
+    assert 'class="btn action export export-caret"' in html
+    assert "group_dir" in script
+    assert "exportResult.groups" in html
+    assert "按公司 / 分类拆分的 PDF" in html
+    # Preview navigation with the arrow keys, excluding text fields.
+    assert "ArrowDown" in script
+    assert "ArrowUp" in script
+    assert "stepPreview" in script
+    assert "isContentEditable" in script
+    assert "↑/↓ 切换" in html
+    assert ".export-groups" in css
+    assert ".notice-bar" in css

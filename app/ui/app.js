@@ -15,6 +15,7 @@ createApp({
         batches: [],
         report_choices: { company: [], department: [], reporter: [] },
         recent_import_paths: [],
+        unrecognized_count: 0,
       },
       loading: true,
       fatal: '',
@@ -22,10 +23,12 @@ createApp({
         batch_id: '',
         search: '',
         unlinked_only: false,
+        unrecognized_only: false,
         include_review: true,
         date_from: '',
         date_to: '',
       },
+      unrecognizedDismissed: false,
       invoices: [],
       invoiceSummary: {
         count: 0,
@@ -141,6 +144,13 @@ createApp({
       const cents = Math.floor((kmHundredths * rateHundredths + 50) / 100);
       return (cents / 100).toFixed(2);
     },
+    showUnrecognizedBanner() {
+      return (
+        !this.unrecognizedDismissed &&
+        !this.busy &&
+        Number(this.boot.unrecognized_count) > 0
+      );
+    },
     modalOpen() {
       return (
         this.showReportModal ||
@@ -245,6 +255,26 @@ createApp({
         else if (this.showImportModal) this.showImportModal = false;
         else if (this.preview) this.closePreview();
         return;
+      }
+
+      if (
+        this.preview &&
+        !this.modalOpen &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        (event.key === 'ArrowDown' || event.key === 'ArrowUp')
+      ) {
+        const target = event.target;
+        const editing =
+          target instanceof HTMLElement &&
+          (target.matches('input, textarea, select') || target.isContentEditable);
+        if (!editing) {
+          event.preventDefault();
+          this.stepPreview(event.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
       }
 
       const key = event.key.toLowerCase();
@@ -386,6 +416,7 @@ createApp({
           this.filters.batch_id === '' ? null : Number(this.filters.batch_id),
         search: this.filters.search,
         unlinked_only: this.filters.unlinked_only,
+        unrecognized_only: this.filters.unrecognized_only,
         include_review: this.filters.include_review,
         date_from: this.filters.date_from,
         date_to: this.filters.date_to,
@@ -684,15 +715,20 @@ createApp({
           this.importForm.label
         );
         this.showImportModal = false;
+        this.unrecognizedDismissed = false;
         await this.reloadBootstrap();
         await this.refreshInvoices(true);
-        this.notify(
+        let message =
           `导入完成：新增 ${data.invoices_imported} 张，` +
-            `重复 ${data.invoices_duplicate}，冲突 ${data.invoices_conflict}，` +
-            `待确认 ${data.needs_review}，合计 ¥${data.amount}。`,
-          'success',
-          9000
-        );
+          `重复 ${data.invoices_duplicate}，冲突 ${data.invoices_conflict}，` +
+          `待确认 ${data.needs_review}，合计 ¥${data.amount}。`;
+        if (data.reparsed) {
+          message += `已自动补识别旧记录 ${data.reparsed} 张。`;
+        }
+        if (data.reparse_failed) {
+          message += `仍有 ${data.reparse_failed} 张未识别，可在顶部提示条重试。`;
+        }
+        this.notify(message, 'success', 10000);
       } catch (error) {
         /* surfaced already */
       } finally {
@@ -704,6 +740,8 @@ createApp({
       this.busy = '正在重新识别图片发票，请稍候…';
       try {
         const data = await this.call('reparse_unrecognized');
+        await this.reloadBootstrap();
+        this.unrecognizedDismissed = false;
         await this.refreshInvoices(false);
         const parts = [`重新识别成功 ${data.reparsed} 张`];
         if (data.failed) parts.push(`仍未识别 ${data.failed} 张`);
@@ -912,20 +950,33 @@ createApp({
     },
 
     async exportEvidence() {
-      this.busy = '正在导出证据包…';
+      this.busy = '正在导出证据包和分类 PDF…';
       try {
-        const data = await this.call('export_evidence', this.filterPayload());
+        const data = await this.call(
+          'export_evidence',
+          this.filterPayload(),
+          this.report ? this.report.company : ''
+        );
+        const items = [
+          { label: 'Excel 明细', path: data.excel_path },
+          { label: '打印 PDF（审计用，带标签）', path: data.pdf_path },
+        ];
+        if (data.group_dir) {
+          items.push({
+            label: `分类 PDF 文件夹（${data.group_count} 个）`,
+            path: data.group_dir,
+          });
+        }
         this.exportResult = {
           title: '证据包已导出',
           summary:
             `共 ${data.count} 张发票（待确认 ${data.review_count}），` +
-            `合计 ¥${data.total}；PDF ${data.pages} 页。`,
+            `合计 ¥${data.total}；打印 PDF ${data.pages} 页，` +
+            `分类 PDF（按公司/分类，无标注）${data.group_count || 0} 个。`,
           note: data.notice_only ? '部分票面为通知单，PDF 中已按唯一票面去重。' : '',
           kind: 'export',
-          items: [
-            { label: 'Excel 明细', path: data.excel_path },
-            { label: '打印 PDF', path: data.pdf_path },
-          ],
+          items,
+          groups: data.groups || [],
         };
       } catch (error) {
         /* surfaced already */
@@ -1040,11 +1091,40 @@ createApp({
         this.invoiceEdits = data.edits;
         await this.refreshInvoices(false);
         this.notify('已标记为已核对；识别警告与低置信字段仍保留。', 'success');
+        const index = this.invoices.findIndex(
+          (row) => row.id === data.invoice.id
+        );
+        if (index >= 0 && index < this.invoices.length - 1) {
+          // Confirming is a “done with this one” action: move to the next
+          // invoice so a whole batch can be checked without touching the mouse.
+          await this.stepPreview(1);
+        }
       } catch (error) {
         /* call() already surfaced the message */
       } finally {
         this.previewSaving = false;
       }
+    },
+
+    async stepPreview(delta) {
+      if (!this.preview || !this.invoices.length) return;
+      const rows = this.invoices;
+      let index = rows.findIndex((row) => row.id === this.preview.invoice.id);
+      if (index < 0) index = delta > 0 ? -1 : rows.length;
+      const next = rows[index + delta];
+      if (!next) {
+        this.notify(
+          delta > 0 ? '已经是最后一张发票。' : '已经是第一张发票。',
+          'info',
+          1600
+        );
+        return;
+      }
+      await this.openPreview(next);
+      this.$nextTick(() => {
+        const active = document.querySelector('.invoice-table tbody tr.active');
+        if (active) active.scrollIntoView({ block: 'nearest' });
+      });
     },
 
     closePreview() {

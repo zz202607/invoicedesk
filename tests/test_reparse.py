@@ -94,6 +94,33 @@ def test_reparse_skips_manual_edits(tmp_path: Path, scanned_pdf: Path) -> None:
         connection.close()
 
 
+@pytest.mark.skipif(not ocr.is_available(), reason="RapidOCR is not installed")
+def test_review_only_edits_do_not_block_reparse(
+    tmp_path: Path, scanned_pdf: Path
+) -> None:
+    """“确认无误” is an audit row, not a field correction."""
+    connection = db.connect(tmp_path / "pool.db")
+    try:
+        invoice_id = _insert(connection, scanned_pdf)
+        connection.execute(
+            "INSERT INTO invoice_edits (invoice_id, field, old_value, new_value,"
+            " edited_at) VALUES (?, 'review', '待确认', '已确认', 'now')",
+            (invoice_id,),
+        )
+        connection.commit()
+        result = reparse.reparse_unrecognized(connection)
+        assert result.skipped_edited == 0
+        assert result.reparsed == 1
+        row = connection.execute(
+            "SELECT invoice_type, invoice_number FROM invoices WHERE id = ?",
+            (invoice_id,),
+        ).fetchone()
+        assert row["invoice_type"] == "full_digital_normal"
+        assert row["invoice_number"] == "26502000000000000001"
+    finally:
+        connection.close()
+
+
 def test_reparse_skips_missing_sources(tmp_path: Path) -> None:
     connection = db.connect(tmp_path / "pool.db")
     try:

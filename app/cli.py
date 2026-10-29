@@ -18,6 +18,7 @@ from app.core import db
 from app.core.excel_export import EXCEL_FILENAME, write_workbook
 from app.core.export import ExportError, ExportFilters, collect_rows
 from app.core.export import summarize as summarize_export
+from app.core.group_pdf import GROUP_DIRNAME, write_group_pdfs
 from app.core.importer import import_folder, scan_pdfs
 from app.core.models import ParsedInvoice
 from app.core.parser import parse_pdf, summarize
@@ -444,6 +445,7 @@ def _run_export(args: argparse.Namespace) -> int:
         )
         if print_path.is_symlink() or excel_path.is_symlink():
             raise ExportError("导出目标是符号链接，已拒绝写入。")
+        group_info = write_group_pdfs(out / GROUP_DIRNAME, rows)
         os.replace(temp_print, print_path)
         os.replace(temp_excel, excel_path)
     except ExportError as exc:
@@ -477,8 +479,20 @@ def _run_export(args: argparse.Namespace) -> int:
             f"（{print_info.pages} 页，{print_info.unique_pages} 张票面，"
             f"{print_info.records} 条记录）"
         )
+    if group_info.groups:
+        print(
+            f"分类 PDF: {group_info.directory}"
+            f"（{len(group_info.groups)} 个文件，按公司和分类拆分，无标注）"
+        )
+        for group in group_info.groups:
+            print(
+                f"  {group.company} / {group.category}"
+                f"：{group.count} 张、{group.pages} 页 → {group.path}"
+            )
     _print_skipped("缺少源文件", print_info.skipped_missing)
     _print_skipped("无法打开票面", print_info.skipped_invalid)
+    _print_skipped("分类 PDF 缺少源文件", group_info.skipped_missing)
+    _print_skipped("分类 PDF 无法打开票面", group_info.skipped_invalid)
     if print_info.records != summary.count:
         print(
             f"提示: 打印包缺少 {summary.count - print_info.records} 条发票记录，"

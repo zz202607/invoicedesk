@@ -44,6 +44,11 @@ class ImportSummary:
     invoices_conflict: int
     needs_review: int
     amount_total: Decimal
+    # Duplicate files are skipped by hash, but an old record may predate OCR.
+    # These counters report the automatic retry on this import.
+    reparse_candidates: int = 0
+    reparsed: int = 0
+    reparse_failed: int = 0
 
     @property
     def has_new_data(self) -> bool:
@@ -72,6 +77,39 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _retry_unrecognized_duplicates(
+    connection: sqlite3.Connection, duplicate_hashes: set[str]
+) -> tuple[int, int, int]:
+    """OCR old ``scanned`` records for files seen again in this import.
+
+    Files are deduplicated by content hash, so re-importing a folder cannot
+    upgrade rows created by a build that had no OCR. Retrying here makes the
+    recovery automatic instead of hiding it behind a separate button.
+    """
+    if not duplicate_hashes:
+        return (0, 0, 0)
+    from app.core import ocr  # local import: OCR is an optional, heavy dependency
+
+    if not ocr.is_available():
+        return (0, 0, 0)
+    hashes = tuple(duplicate_hashes)
+    ids = [
+        row[0]
+        for row in connection.execute(
+            "SELECT id FROM invoices"
+            f" WHERE file_sha256 IN ({', '.join('?' for _ in hashes)})"
+            " AND invoice_type IN ('scanned', 'unknown', 'error')",
+            hashes,
+        )
+    ]
+    if not ids:
+        return (0, 0, 0)
+    from app.core import reparse  # local import avoids a module cycle
+
+    result = reparse.reparse_unrecognized(connection, invoice_ids=ids)
+    return (result.candidates, result.reparsed, result.failed)
+
+
 def import_folder(
     connection: sqlite3.Connection,
     path: str | Path,
@@ -93,11 +131,14 @@ def import_folder(
     known_hashes = {row[0] for row in connection.execute("SELECT sha256 FROM files")}
     candidates: list[tuple[Path, str]] = []
     seen_hashes: set[str] = set()
+    duplicate_hashes: set[str] = set()
     duplicates = 0
     for item in files:
         digest = sha256_file(item)
         if digest in known_hashes or digest in seen_hashes:
             duplicates += 1
+            if digest in known_hashes:
+                duplicate_hashes.add(digest)
             continue
         seen_hashes.add(digest)
         candidates.append((item, digest))
@@ -106,6 +147,9 @@ def import_folder(
     source_dir = str(source.parent.resolve() if source.is_file() else source.resolve())
 
     if not candidates:
+        candidates_seen, reparsed, reparse_failed = _retry_unrecognized_duplicates(
+            connection, duplicate_hashes
+        )
         return ImportSummary(
             batch_id=None,
             label=batch_label,
@@ -118,6 +162,9 @@ def import_folder(
             invoices_conflict=0,
             needs_review=0,
             amount_total=Decimal("0.00"),
+            reparse_candidates=candidates_seen,
+            reparsed=reparsed,
+            reparse_failed=reparse_failed,
         )
 
     invoice_index = db.invoice_index(connection)
@@ -213,6 +260,9 @@ def import_folder(
                 conflict_count=conflict_count,
             )
 
+    candidates_seen, reparsed, reparse_failed = _retry_unrecognized_duplicates(
+        connection, duplicate_hashes
+    )
     return ImportSummary(
         batch_id=batch_id,
         label=batch_label,
@@ -225,4 +275,7 @@ def import_folder(
         invoices_conflict=invoices_conflict,
         needs_review=needs_review,
         amount_total=amount_total,
+        reparse_candidates=candidates_seen,
+        reparsed=reparsed,
+        reparse_failed=reparse_failed,
     )

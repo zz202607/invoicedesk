@@ -11,6 +11,7 @@ import fitz
 import pytest
 
 from app.core import db, invoices, reports, workbench
+from app.core.models import InvoiceType
 from app.core.workbench import PreviewError
 from tests.pdf_factory import make_pdf, make_pdf_pages
 from tests.report_factory import add_invoice, add_line, make_db, make_report
@@ -97,6 +98,21 @@ def test_list_invoices_or_branches_and_date_edges(connection) -> None:
     assert no_date not in ids(
         workbench.list_invoices(connection, date_to="2999-12-31")
     )
+
+
+def test_unrecognized_only_filter(connection) -> None:
+    recognized = add_invoice(connection, index=1, number="U1")
+    scanned = add_invoice(
+        connection, index=2, number="U2", invoice_type=InvoiceType.SCANNED
+    )
+    unknown = add_invoice(
+        connection, index=3, number="U3", invoice_type=InvoiceType.UNKNOWN
+    )
+
+    rows = workbench.list_invoices(connection, unrecognized_only=True)
+
+    assert {row.id for row in rows} == {scanned, unknown}
+    assert recognized not in {row.id for row in rows}
 
 
 def test_links_and_unlinked_filter(connection) -> None:
