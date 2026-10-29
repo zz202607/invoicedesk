@@ -23,7 +23,7 @@ from app.core.models import ParsedInvoice
 from app.core.paths import is_unsafe_repo_path, remote_storage_reason
 from app.core.text import normalize
 
-DB_VERSION = 4
+DB_VERSION = 5
 CENT = Decimal("0.01")
 DEFAULT_DB_PATH = Path("data") / "invoicedesk.db"
 
@@ -137,6 +137,11 @@ CREATE TABLE IF NOT EXISTS report_line_invoices (
 
 CREATE INDEX IF NOT EXISTS idx_report_line_invoices_invoice
     ON report_line_invoices(invoice_id);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
 """
 
 
@@ -392,6 +397,73 @@ def insert_invoice(
     if invoice_id is None:  # pragma: no cover - sqlite always returns a row id here
         raise RuntimeError("无法写开发票")
     return invoice_id
+
+
+RECENT_IMPORT_LIMIT = 8
+RECENT_IMPORT_KEY = "recent_import_paths"
+
+
+def get_setting(connection: sqlite3.Connection, key: str, default: str = "") -> str:
+    row = connection.execute(
+        "SELECT value FROM settings WHERE key = ?", (key,)
+    ).fetchone()
+    return row["value"] if row is not None else default
+
+
+def set_setting(connection: sqlite3.Connection, key: str, value: str) -> None:
+    connection.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?)"
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+
+
+def recent_import_paths(connection: sqlite3.Connection) -> list[str]:
+    """Folders the user imported from recently, newest first."""
+    raw = get_setting(connection, RECENT_IMPORT_KEY, "[]")
+    try:
+        values = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(values, list):
+        return []
+    return [value for value in values if isinstance(value, str) and value.strip()]
+
+
+def remember_import_path(
+    connection: sqlite3.Connection, path: str, *, limit: int = RECENT_IMPORT_LIMIT
+) -> list[str]:
+    """Move ``path`` to the front of the recent-folder list and persist it.
+
+    Windows paths are compared case-insensitively so the same folder typed
+    with different casing does not fill the list with duplicates.
+    """
+    text = str(path).strip()
+    if not text:
+        return recent_import_paths(connection)
+    key = text.casefold().rstrip("\\/")
+    history = recent_import_paths(connection)
+    result = [text]
+    for item in history:
+        if item.casefold().rstrip("\\/") != key:
+            result.append(item)
+    result = result[: max(1, limit)]
+    set_setting(connection, RECENT_IMPORT_KEY, json.dumps(result, ensure_ascii=False))
+    return result
+
+
+def report_choices(connection: sqlite3.Connection, *, limit: int = 20) -> dict[str, list[str]]:
+    """Distinct company / department / reporter values, most used first."""
+    choices: dict[str, list[str]] = {}
+    for field in ("company", "department", "reporter"):
+        rows = connection.execute(
+            f"SELECT {field} AS value, COUNT(*) AS uses FROM reports"
+            f" WHERE TRIM({field}) <> '' GROUP BY {field}"
+            f" ORDER BY uses DESC, value LIMIT ?",
+            (limit,),
+        ).fetchall()
+        choices[field] = [row["value"] for row in rows]
+    return choices
 
 
 def batch_stats(connection: sqlite3.Connection) -> list[BatchStats]:

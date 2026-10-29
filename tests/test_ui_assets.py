@@ -158,3 +158,47 @@ def test_keyboard_shortcuts_are_wired() -> None:
     assert script.index("showShortcutsModal) this.showShortcutsModal = false") < script.index(
         "showDashboardModal) this.showDashboardModal = false"
     )
+
+
+def test_import_and_export_are_prominent_and_wired() -> None:
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    css = (UI / "styles.css").read_text(encoding="utf-8")
+    # Both are primary quick actions in the top bar, with the export choices
+    # reachable from one visible menu.
+    assert 'class="btn action import"' in html
+    assert 'class="btn action export"' in html
+    assert "导出报销单" in html
+    assert "导出证据包" in html
+    assert "exportReportFromMenu" in script
+    assert "exportEvidenceFromMenu" in script
+    assert ".btn.action.import" in css
+    assert ".btn.action.export" in css
+
+
+def test_import_modal_offers_recent_folders() -> None:
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    assert "最近用过的文件夹" in html
+    assert "recent_import_paths" in script
+    assert "folderName" in script
+    assert "openImportModal" in script
+
+
+def test_report_header_fields_offer_remembered_values() -> None:
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    assert 'list="company-options"' in html
+    assert 'list="department-options"' in html
+    assert 'list="reporter-options"' in html
+    assert "hasReportChoices" in script
+    assert "boot.report_choices.company" in html
+    assert "reportForm.company = name" in html
+
+
+def test_reparse_action_is_wired_to_the_bridge() -> None:
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    assert "重新识别未识别" in html
+    assert "reparseUnrecognized" in script
+    assert "reparse_unrecognized" in script

@@ -91,6 +91,12 @@ def test_bootstrap_envelope(api: Api) -> None:
     assert [layout["key"] for layout in data["layouts"]] == ["project", "company", "plain"]
     assert data["reports"] == []
     assert data["db_name"] == "workbench.db"
+    assert data["recent_import_paths"] == []
+    assert data["report_choices"] == {
+        "company": [],
+        "department": [],
+        "reporter": [],
+    }
     assert "db_path" not in data
 
 
@@ -1050,6 +1056,16 @@ def test_pick_folder_returns_selection_and_trims_the_initial_value(tmp_path) -> 
     assert seen == [r"D:\发票"]
 
 
+def test_pick_folder_is_remembered_for_the_next_import(tmp_path) -> None:
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    api = _folder_dialog_api(tmp_path, lambda current: str(folder))
+    assert api.pick_folder()["ok"] is True
+    boot = api.bootstrap()
+    assert boot["ok"] is True
+    assert boot["data"]["recent_import_paths"] == [str(folder)]
+
+
 def test_pick_folder_cancel_blank_and_oversized_initial(tmp_path) -> None:
     seen: list[str] = []
 
@@ -1082,3 +1098,30 @@ def test_pick_folder_errors_are_redacted(tmp_path) -> None:
     assert response["ok"] is False
     assert r"D:\Customers" not in response["error"]
     assert "<路径已隐藏>" in response["error"]
+
+
+def test_reparse_endpoint_is_empty_when_everything_is_recognized(api: Api) -> None:
+    response = api.reparse_unrecognized()
+    assert response["ok"] is True
+    assert response["data"] == {
+        "candidates": 0,
+        "reparsed": 0,
+        "failed": 0,
+        "skipped_edited": 0,
+        "skipped_missing": 0,
+        "conflicts": 0,
+    }
+
+
+def test_bootstrap_falls_back_to_existing_batch_folders(api: Api, tmp_path) -> None:
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    connection = db.connect(tmp_path / "workbench.db")
+    try:
+        with connection:
+            db.create_batch(connection, label="旧批次", source_dir=str(folder))
+    finally:
+        connection.close()
+    boot = api.bootstrap()
+    assert boot["ok"] is True
+    assert boot["data"]["recent_import_paths"] == [str(folder)]

@@ -36,6 +36,9 @@ CN_DIGITS = {
     "八": 8,
     "九": 9,
 }
+UPPER_DIGITS = "零壹贰叁肆伍陆柒捌玖"
+UPPER_UNITS = ("", "拾", "佰", "仟")
+UPPER_GROUPS = ("", "万", "亿", "万亿")
 CN_SMALL_UNITS = {"拾": 10, "十": 10, "佰": 100, "百": 100, "仟": 1000, "千": 1000}
 CN_AMOUNT_RE = re.compile(r"[零壹贰叁肆伍陆柒捌玖拾佰仟万亿圆元角分整一二三四五六七八九十百千]+")
 
@@ -112,6 +115,81 @@ def _parse_integer_part(text: str) -> int:
             section = 0
             number = 0
     return total + section + number
+
+
+def _upper_group(value: int) -> str:
+    """Render one four-digit group (0-9999) without leading zeroes."""
+    text = ""
+    pending_zero = False
+    for position, unit in zip((1000, 100, 10, 1), UPPER_UNITS[::-1], strict=True):
+        digit = value // position % 10
+        if digit == 0:
+            if text:
+                pending_zero = True
+            continue
+        if pending_zero:
+            text += "零"
+            pending_zero = False
+        text += UPPER_DIGITS[digit] + unit
+    return text
+
+
+def _upper_integer(value: int) -> str:
+    """Render a non-negative integer in financial uppercase (``壹万零贰拾``)."""
+    if value == 0:
+        return "零"
+    groups: list[int] = []
+    while value:
+        groups.append(value % 10000)
+        value //= 10000
+    if len(groups) > len(UPPER_GROUPS):
+        raise ValueError("金额超出可转换范围")
+    text = ""
+    pending_zero = False
+    for index in range(len(groups) - 1, -1, -1):
+        group = groups[index]
+        if group == 0:
+            if text and any(groups[lower] for lower in range(index)):
+                pending_zero = True
+            continue
+        if text and (pending_zero or group < 1000):
+            text += "零"
+        text += _upper_group(group) + UPPER_GROUPS[index]
+        pending_zero = False
+    return text
+
+
+def chinese_upper(value: Decimal | int | None) -> str:
+    """Render an amount (yuan) as the financial uppercase string used on forms.
+
+    ``15.48`` -> ``壹拾伍元肆角捌分``; whole yuan end in ``整``; a missing
+    jiao digit is written as ``零X分`` (``1.05`` -> ``壹元零伍分``). Negative
+    (red) totals keep a leading ``负``.
+    """
+    if value is None:
+        return ""
+    amount = quantize(Decimal(value))
+    negative = amount < 0
+    cents = int(abs(amount) * 100)
+    integer, remainder = divmod(cents, 100)
+    jiao, fen = divmod(remainder, 10)
+    text = _upper_integer(integer) + "元"
+    if jiao == 0 and fen == 0:
+        text += "整"
+    elif jiao == 0:
+        text += "零" + UPPER_DIGITS[fen] + "分"
+    elif fen == 0:
+        text += UPPER_DIGITS[jiao] + "角"
+    else:
+        text += UPPER_DIGITS[jiao] + "角" + UPPER_DIGITS[fen] + "分"
+    return ("负" + text) if negative else text
+
+
+def chinese_upper_cents(value: int | None) -> str:
+    """Uppercase rendering for an integer-cents amount (the database form)."""
+    if value is None:
+        return ""
+    return chinese_upper(Decimal(value) / 100)
 
 
 def parse_chinese_amount(text: str) -> Decimal | None:

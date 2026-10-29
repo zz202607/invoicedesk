@@ -50,6 +50,17 @@ def _digits(text: str) -> str:
     return re.sub(r"\s+", "", text)
 
 
+def _infer_ocr_type(text: str) -> InvoiceType | None:
+    """Name the e-invoice type from OCR title fragments around the red seal."""
+    if "发票号码" not in text:
+        return None
+    if "专用" in text:
+        return InvoiceType.FULL_DIGITAL_SPECIAL
+    if "普通" in text or "电子发" in text:
+        return InvoiceType.FULL_DIGITAL_NORMAL
+    return None
+
+
 def _detect_type(text: str) -> InvoiceType:
     if "铁路电子客票" in text:
         return InvoiceType.TRAIN
@@ -61,10 +72,13 @@ def _detect_type(text: str) -> InvoiceType:
         return InvoiceType.TAXI
     if "增值税电子普通发票" in text:
         return InvoiceType.VAT_ELECTRONIC
-    if "电子发票" in text and "专用发票" in text:
-        return InvoiceType.FULL_DIGITAL_SPECIAL
-    if "电子发票" in text and "普通发票" in text:
-        return InvoiceType.FULL_DIGITAL_NORMAL
+    if "电子发票" in text:
+        if "专用发票" in text:
+            return InvoiceType.FULL_DIGITAL_SPECIAL
+        # The red seal over the title often hides 「普通」from OCR; an
+        # e-invoice number is still strong evidence of a normal invoice.
+        if "普通发票" in text or "发票号码" in text:
+            return InvoiceType.FULL_DIGITAL_NORMAL
     return InvoiceType.UNKNOWN
 
 
@@ -154,8 +168,7 @@ def _name_candidates(lines: Sequence[TextLine]) -> list[TextLine]:
         "购买方",
         "销售方",
         "发票",
-        "国家税务总局",
-        "税务局",
+        "税务",
         "密码区",
         "校验码",
         "日期",
@@ -180,26 +193,132 @@ def _name_candidates(lines: Sequence[TextLine]) -> list[TextLine]:
             continue
         if any(token in value for token in skip):
             continue
+        if value.startswith("*") or ITEM_RE.search(value):
+            # Item rows (``*类别*名称``) sit close to the party block but are
+            # never company names.
+            continue
+        if re.search(r"[¥￥]", value) or re.search(r"[零壹贰叁肆伍陆柒捌玖]", value):
+            # Currency and uppercase-amount lines sit near the party block on
+            # OCR output but are never company names.
+            continue
         if re.search(r"\d{4,}", value) or re.search(r"[:：]", value):
             continue
         result.append(TextLine(value, line.x0, line.y0, line.x1, line.y1))
     return result
 
 
-def _tax_id_lines(lines: Sequence[TextLine]) -> list[tuple[TextLine, str]]:
-    result: list[tuple[TextLine, str]] = []
+def _split_at(line: TextLine, start: int, end: int) -> TextLine:
+    """Slice a text line horizontally at character positions.
+
+    OCR sometimes merges the buyer and seller tax-ID rows into one wide box.
+    Character positions are not pixel-exact, but they are enough to keep the
+    two parties attached to the correct name column.
+    """
+    length = max(len(line.text), 1)
+    width = line.x1 - line.x0
+    x0 = line.x0 + width * (start / length)
+    x1 = line.x0 + width * (end / length)
+    return TextLine(line.text[start:end], x0, line.y0, x1, line.y1)
+
+
+def _tax_id_groups(
+    lines: Sequence[TextLine],
+) -> list[tuple[TextLine, list[tuple[int, int, str]]]]:
+    """Tax IDs per text line, de-duplicated and keeping character offsets."""
+    result: list[tuple[TextLine, list[tuple[int, int, str]]]] = []
+    seen: set[str] = set()
     for line in lines:
-        match = TAX_ID_RE.search(line.text)
-        if match:
-            result.append((line, match.group(0)))
+        matches: list[tuple[int, int, str]] = []
+        for match in TAX_ID_RE.finditer(line.text):
+            tax_id = match.group(0)
+            if tax_id in seen:
+                continue
+            seen.add(tax_id)
+            matches.append((match.start(), match.end(), tax_id))
+        if matches:
+            result.append((line, matches))
     return result
+
+
+def _party_distance(label: TextLine, pair: tuple[TextLine, str, TextLine]) -> float:
+    tax_line = pair[0]
+    return abs(label.cx - tax_line.cx) + abs(label.cy - tax_line.cy) * 1.5
+
+
+def _order_parties(
+    pairs: list[tuple[TextLine, str, TextLine]],
+    lines: Sequence[TextLine],
+    page_width: float,
+) -> list[tuple[TextLine, str, TextLine]]:
+    """Put the buyer block first, using the printed 购买方/销售方 labels.
+
+    OCR can report the two tax-ID rows a few points out of vertical order, so
+    "topmost pair is the buyer" is not reliable. The labels sit next to their
+    blocks; when they are missing, a left/right layout is the fallback, and a
+    vertically stacked layout keeps the row order.
+    """
+    if len(pairs) < 2:
+        return pairs
+    head = pairs[:2]
+    rest = pairs[2:]
+    buyer_labels = [line for line in lines if "购买方" in line.text]
+    seller_labels = [line for line in lines if "销售方" in line.text]
+    if buyer_labels and seller_labels:
+        buyer_label, seller_label = buyer_labels[0], seller_labels[0]
+        direct = _party_distance(buyer_label, head[0]) + _party_distance(seller_label, head[1])
+        swapped = _party_distance(buyer_label, head[1]) + _party_distance(seller_label, head[0])
+        if swapped < direct:
+            head.reverse()
+    elif buyer_labels or seller_labels:
+        buyer_first = bool(buyer_labels)
+        label = (buyer_labels or seller_labels)[0]
+        closest = min(range(2), key=lambda index: _party_distance(label, head[index]))
+        if (closest == 0) != buyer_first:
+            head.reverse()
+    else:
+        first, second = head
+        side_by_side = (
+            abs(first[0].cy - second[0].cy) <= 40
+            and abs(first[0].x0 - second[0].x0) >= page_width * 0.2
+        )
+        head.sort(key=lambda pair: pair[0].x0 if side_by_side else pair[0].cy)
+    return [*head, *rest]
+
+
+def _partner_name(
+    names: Sequence[TextLine],
+    used_names: set[int],
+    anchor: TextLine,
+    *,
+    to_right: bool,
+) -> TextLine | None:
+    """Find the unlabeled party next to a known one.
+
+    OCR sometimes loses one tax-ID line entirely while still reading both
+    names; the surviving pair tells us which role is missing, and the nearest
+    unused name on the other column can fill it.
+    """
+    best: TextLine | None = None
+    best_score = float("inf")
+    for name in names:
+        if id(name) in used_names or id(name) == id(anchor):
+            continue
+        if abs(name.cy - anchor.cy) > 25:
+            continue
+        if to_right and name.x0 <= anchor.x0 + 40:
+            continue
+        if not to_right and name.x0 >= anchor.x0 - 40:
+            continue
+        score = abs(name.x0 - anchor.x0)
+        if score < best_score:
+            best, best_score = name, score
+    return best
 
 
 def _extract_parties(
     lines: Sequence[TextLine], invoice_type: InvoiceType, page_width: float
 ) -> tuple[dict[str, str], dict[str, str], list[str]]:
     warnings: list[str] = []
-    tax_lines = _tax_id_lines(lines)
     names = _name_candidates(lines)
 
     if invoice_type is InvoiceType.TRAIN:
@@ -212,7 +331,39 @@ def _extract_parties(
 
     pairs: list[tuple[TextLine, str, TextLine]] = []
     used_names: set[int] = set()
-    for tax_line, tax_id in tax_lines:
+    unpaired: list[tuple[TextLine, str]] = []
+
+    def _segment(line: TextLine, start: int, end: int) -> TextLine:
+        if start == 0 and end == len(line.text):
+            return line
+        return _split_at(line, start, end)
+
+    for line, matches in _tax_id_groups(lines):
+        if len(matches) > 1:
+            # OCR merged the buyer and seller rows into one wide line. Column
+            # order is reliable even when pixel estimates are not: pair the
+            # left-to-right tax IDs with the left-to-right names on that row.
+            row_names = [
+                name
+                for name in names
+                if id(name) not in used_names
+                and -8 <= line.cy - name.cy <= 60
+                and line.x0 - 20 <= name.x0 <= line.x1 + 20
+            ]
+            row_names.sort(key=lambda item: item.x0)
+            paired = min(len(matches), len(row_names))
+            for (start, end, tax_id), name in zip(matches[:paired], row_names):
+                pairs.append((_segment(line, start, end), tax_id, name))
+                used_names.add(id(name))
+            unpaired.extend(
+                (_segment(line, start, end), tax_id)
+                for start, end, tax_id in matches[paired:]
+            )
+        else:
+            start, end, tax_id = matches[0]
+            unpaired.append((_segment(line, start, end), tax_id))
+
+    for tax_line, tax_id in unpaired:
         best_name: TextLine | None = None
         best_score = float("inf")
         for name in names:
@@ -233,7 +384,10 @@ def _extract_parties(
             pairs.append((tax_line, tax_id, best_name))
             used_names.add(id(best_name))
 
-    pairs.sort(key=lambda item: (round(item[0].cy, 1), item[0].x0))
+    if invoice_type is InvoiceType.TRAIN:
+        pairs.sort(key=lambda item: (round(item[0].cy, 1), item[0].x0))
+    else:
+        pairs = _order_parties(pairs, lines, page_width)
 
     values: dict[str, str] = {
         "buyer_name": "",
@@ -275,12 +429,24 @@ def _extract_parties(
             values["seller_name"] = only[2].text
             values["seller_tax_id"] = only[1]
             confidence["seller_name"] = _confidence(Confidence.MEDIUM)
-            warnings.append("仅识别到销售方，购买方信息缺失")
+            partner = _partner_name(names, used_names, only[2], to_right=False)
+            if partner is not None:
+                values["buyer_name"] = partner.text
+                confidence["buyer_name"] = _confidence(Confidence.MEDIUM)
+                warnings.append("仅识别到销售方税号，购买方名称按位置推断")
+            else:
+                warnings.append("仅识别到销售方，购买方信息缺失")
         else:
             values["buyer_name"] = only[2].text
             values["buyer_tax_id"] = only[1]
             confidence["buyer_name"] = _confidence(Confidence.MEDIUM)
-            warnings.append("仅识别到一个交易方，无法区分购买方/销售方")
+            partner = _partner_name(names, used_names, only[2], to_right=True)
+            if partner is not None:
+                values["seller_name"] = partner.text
+                confidence["seller_name"] = _confidence(Confidence.MEDIUM)
+                warnings.append("仅识别到购买方税号，销售方名称按位置推断")
+            else:
+                warnings.append("仅识别到一个交易方，无法区分购买方/销售方")
     else:
         warnings.append("销售方缺失")
 
@@ -465,6 +631,34 @@ def _extract_items(lines: Sequence[TextLine], invoice_type: InvoiceType) -> str:
     return ""
 
 
+OCR_WARNING = "票面无可用文本层，已用 OCR 识别，请核对"
+
+
+def _needs_ocr(text: str, page: fitz.Page) -> bool:
+    stripped = text.strip()
+    if len(stripped) < 20:
+        return True
+    if _detect_type(text) is not InvoiceType.UNKNOWN:
+        return False
+    # A text layer that has almost no Chinese is usually a font-encoding
+    # artifact (CID fonts without ToUnicode) while the page itself is a raster.
+    cjk = len(re.findall(r"[一-鿿]", stripped))
+    return cjk < 8 and bool(page.get_images(full=True))
+
+
+def _ocr_lines(page: fitz.Page) -> tuple[list[TextLine] | None, str]:
+    """Return OCR lines for ``page`` or an error message; never raises."""
+    try:
+        from app.core.ocr import OcrError, page_lines
+
+        lines = page_lines(page)
+    except OcrError as exc:
+        return None, str(exc)
+    except Exception as exc:  # noqa: BLE001 - OCR is an optional recovery path
+        return None, f"OCR 不可用：{exc}"
+    return lines, ""
+
+
 def parse_page(page: fitz.Page, *, source_path: str, page_index: int, page_count: int) -> ParsedInvoice:
     lines = extract_lines(page)
     text = page_text(lines)
@@ -475,13 +669,34 @@ def parse_page(page: fitz.Page, *, source_path: str, page_index: int, page_count
         text_length=len(text),
     )
 
+    ocr_used = False
+    ocr_error = ""
+    if _needs_ocr(text, page):
+        ocr_result, ocr_error = _ocr_lines(page)
+        if ocr_result is not None and len(page_text(ocr_result).strip()) >= 20:
+            lines = ocr_result
+            text = page_text(lines)
+            ocr_used = True
+            parsed.text_length = len(text)
+
     if len(text.strip()) < 20:
         parsed.invoice_type = InvoiceType.SCANNED
-        parsed.warnings.append("无文本层，可能是扫描件/图片发票")
+        if ocr_used:  # pragma: no cover - OCR returned text then lost it
+            parsed.warnings.append("无文本层，OCR 结果为空")
+        elif ocr_error:
+            parsed.warnings.append(f"无文本层，{ocr_error}")
+        else:
+            parsed.warnings.append("无文本层，可能是扫描件/图片发票")
         parsed.confidence = {"invoice_type": _confidence(Confidence.LOW)}
         return parsed
 
     parsed.invoice_type = _detect_type(text)
+    type_note = ""
+    if ocr_used and parsed.invoice_type is InvoiceType.UNKNOWN:
+        inferred = _infer_ocr_type(text)
+        if inferred is not None:
+            parsed.invoice_type = inferred
+            type_note = "票型按 OCR 标题片段推断"
     parsed.invoice_number, number_conf, number_warning = _extract_invoice_number(lines)
     parsed.invoice_date, date_conf, date_warning = _extract_invoice_date(lines)
     parties, party_conf, party_warnings = _extract_parties(
@@ -521,13 +736,25 @@ def parse_page(page: fitz.Page, *, source_path: str, page_index: int, page_count
         ),
     }
 
-    for warning in (number_warning, date_warning, *party_warnings, *amount_warnings):
+    for warning in (
+        type_note,
+        number_warning,
+        date_warning,
+        *party_warnings,
+        *amount_warnings,
+    ):
         if warning and warning not in parsed.warnings:
             parsed.warnings.append(warning)
     if parsed.invoice_type is InvoiceType.UNKNOWN:
         parsed.warnings.append("未识别票型")
     if len(find_lines(lines, r"发票号码")) > 1 or len(find_lines(lines, r"小写")) > 1:
         parsed.warnings.append("页面可能包含多张发票，需人工拆分")
+    if ocr_used:
+        parsed.confidence = {
+            key: (_confidence(Confidence.MEDIUM) if value == _confidence(Confidence.HIGH) else value)
+            for key, value in parsed.confidence.items()
+        }
+        parsed.warnings.insert(0, OCR_WARNING)
     return parsed
 
 

@@ -139,13 +139,22 @@ def _write_smoke_report(report: dict[str, object]) -> None:
 
 
 def run_smoke() -> int:
-    """Check bundle resources, WebView2, and a throwaway database; no window."""
+    """Check bundle resources, OCR, WebView2, and a throwaway database; no window."""
     ui_dir = runtime.resource_path("app/ui")
     checks: dict[str, bool] = {
         "ui_assets": all((ui_dir / name).is_file() for name in SMOKE_ASSETS),
         "webview2": sys.platform != "win32" or runtime.webview2_available(),
     }
     detail: dict[str, object] = {}
+    try:
+        # A frozen bundle is only useful if the OCR models were packaged too.
+        from app.core import ocr
+
+        ocr.self_check()
+        checks["ocr"] = True
+    except Exception as exc:  # noqa: BLE001 - reported in the smoke report
+        checks["ocr"] = False
+        detail["ocr_error"] = redact_paths(str(exc))
     try:
         with tempfile.TemporaryDirectory(prefix="invoicedesk-smoke-") as tmp:
             api = Api(db_path=Path(tmp) / "smoke.db", out_dir=Path(tmp) / "out")

@@ -11,25 +11,43 @@ and runs the frozen ``--smoke`` check.
 
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files
+
 ROOT = Path(SPECPATH).resolve()
 ICON = ROOT / "build" / "icon.ico"
+# RapidOCR ships its ONNX models and keys inside the package; the OCR path is
+# useless without them, so bundle the data next to the modules.
+OCR_DATAS = collect_data_files("rapidocr_onnxruntime")
 
 a = Analysis(
     [str(ROOT / "run.py")],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[(str(ROOT / "app" / "ui"), "app/ui")],
+    datas=[(str(ROOT / "app" / "ui"), "app/ui"), *OCR_DATAS],
     hiddenimports=[
         "webview.platforms.winforms",
         "webview.platforms.edgechromium",
         "clr",
+        "rapidocr_onnxruntime",
+        "onnxruntime",
+        "cv2",
+        "yaml",
+        "shapely",
+        "pyclipper",
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pytest", "PIL", "numpy", "pandas", "matplotlib", "tkinter"],
+    excludes=["pytest", "pandas", "matplotlib", "tkinter", "PyQt5", "PySide6"],
     noarchive=False,
 )
+
+# OCR needs image decoding and inference, not video codecs or AVIF/WebP plugins.
+# Dropping these binaries saves ~37 MB; the frozen smoke test still runs OCR.
+_DROP = ("opencv_videoio_ffmpeg", "pil/_avif", "pil/_webp")
+a.binaries = [
+    item for item in a.binaries if not any(token in item[0].lower() for token in _DROP)
+]
 pyz = PYZ(a.pure)
 
 exe = EXE(

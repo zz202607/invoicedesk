@@ -21,7 +21,7 @@ from typing import Any
 from uuid import uuid4
 
 from app import __version__
-from app.core import db, importer, invoices, learning, reports, runtime, workbench
+from app.core import db, importer, invoices, learning, reparse, reports, runtime, workbench
 from app.core.categories import CATEGORIES, DEFAULT_CATEGORY
 from app.core.excel_export import EXCEL_FILENAME, write_workbook
 from app.core.export import (
@@ -387,6 +387,26 @@ class Api:
         with contextlib.closing(self._connect()) as connection:
             batches = db.batch_stats(connection)
             report_rows = reports.list_reports(connection)
+            report_choices = db.report_choices(connection)
+            recent_paths = [
+                path
+                for path in db.recent_import_paths(connection)
+                if Path(path).is_dir()
+            ]
+            # Databases created before the settings table still know where
+            # their batches came from; use those as a one-time fallback.
+            seen = {path.casefold().rstrip("\\/") for path in recent_paths}
+            for batch in reversed(batches):
+                source = batch.source_dir
+                key = source.casefold().rstrip("\\/")
+                if (
+                    source
+                    and key not in seen
+                    and Path(source).is_dir()
+                    and len(recent_paths) < db.RECENT_IMPORT_LIMIT
+                ):
+                    recent_paths.append(source)
+                    seen.add(key)
         return {
             "version": __version__,
             "today": today.isoformat(),
@@ -411,6 +431,8 @@ class Api:
                 for batch in batches
             ],
             "reports": [_report_dict(report) for report in report_rows],
+            "report_choices": report_choices,
+            "recent_import_paths": recent_paths,
         }
 
     @_endpoint
@@ -571,6 +593,21 @@ class Api:
             "changed": len(result.changed),
             "rule": _rule_dict(result.rule),
             "conflict": result.conflict,
+        }
+
+    @_endpoint
+    def reparse_unrecognized(self, invoice_ids: list[int] | None = None) -> dict[str, Any]:
+        """Retry OCR for scanned/unknown records already in the pool."""
+        ids = _invoice_ids(invoice_ids) if invoice_ids else None
+        with contextlib.closing(self._connect()) as connection:
+            result = reparse.reparse_unrecognized(connection, invoice_ids=ids)
+        return {
+            "candidates": result.candidates,
+            "reparsed": result.reparsed,
+            "failed": result.failed,
+            "skipped_edited": result.skipped_edited,
+            "skipped_missing": result.skipped_missing,
+            "conflicts": result.conflicts,
         }
 
     @_endpoint
@@ -898,6 +935,11 @@ class Api:
             initial = ""
         chosen = self._folder_dialog(initial)
         path = str(chosen or "").strip()
+        if path:
+            # Remember a folder as soon as it is picked; the import may have
+            # nothing new, but the next import should still start here.
+            with contextlib.closing(self._connect()) as connection, connection:
+                db.remember_import_path(connection, path)
         return {"path": path or None}
 
     @_endpoint
@@ -909,6 +951,9 @@ class Api:
             summary = importer.import_folder(
                 connection, source, label=(label.strip() or None)
             )
+            with connection:
+                remembered = source.parent if source.is_file() else source
+                db.remember_import_path(connection, str(remembered.resolve()))
         return {
             "batch_id": summary.batch_id,
             "label": summary.label,

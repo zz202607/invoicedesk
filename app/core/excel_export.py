@@ -15,6 +15,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from app.core.amounts import chinese_upper_cents
 from app.core.export import ExportError, ExportFilters, ExportRow, ExportSummary
 from app.core.print_pdf import PrintInfo
 from app.core.text import normalize
@@ -198,6 +199,23 @@ def _write_detail(worksheet: Worksheet, rows: Sequence[ExportRow], summary: Expo
         cell.border = TOP_BORDER
     label.border = TOP_BORDER
 
+    upper_row = total_row + 1
+    upper_label = worksheet.cell(row=upper_row, column=7)
+    _set_literal(upper_label, "价税合计（大写）")
+    upper_label.font = BOLD_FONT
+    upper_label.alignment = MONEY_ALIGN
+    upper_label.border = TOP_BORDER
+    upper_value = worksheet.cell(row=upper_row, column=8)
+    _set_literal(upper_value, chinese_upper_cents(summary.total_cents), limit=200)
+    upper_value.font = BOLD_FONT
+    upper_value.alignment = Alignment(horizontal="left", vertical="top")
+    worksheet.merge_cells(
+        start_row=upper_row,
+        start_column=8,
+        end_row=upper_row,
+        end_column=len(DETAIL_HEADERS),
+    )
+
     worksheet.auto_filter.ref = f"A1:{get_column_letter(len(DETAIL_HEADERS))}{len(rows) + 1}"
     _finish_sheet(worksheet, DETAIL_WIDTHS, landscape=True)
 
@@ -262,6 +280,19 @@ def _write_category_summary(
     share.font = BOLD_FONT
     share.alignment = MONEY_ALIGN
     share.border = TOP_BORDER
+
+    upper_row = total_row + 1
+    upper_label = worksheet.cell(row=upper_row, column=1)
+    _set_literal(upper_label, "价税合计（大写）")
+    upper_label.font = BOLD_FONT
+    upper_label.border = TOP_BORDER
+    upper_value = worksheet.cell(row=upper_row, column=2)
+    _set_literal(upper_value, chinese_upper_cents(summary.total_cents), limit=200)
+    upper_value.font = BOLD_FONT
+    upper_value.alignment = Alignment(horizontal="left", vertical="top")
+    worksheet.merge_cells(
+        start_row=upper_row, start_column=2, end_row=upper_row, end_column=6
+    )
 
     worksheet.auto_filter.ref = f"A1:F{len(groups) + 1}"
     _finish_sheet(worksheet, (18, 10, 15, 14, 15, 10))
@@ -331,6 +362,7 @@ def _write_metadata(
         ("不含税合计", round(summary.net_cents / 100, 2), MONEY_FORMAT),
         ("税额合计", round(summary.tax_cents / 100, 2), MONEY_FORMAT),
         ("价税合计", round(summary.total_cents / 100, 2), MONEY_FORMAT),
+        ("价税合计（大写）", chinese_upper_cents(summary.total_cents), None),
         ("来源票面数", summary.unique_pages, "0"),
     ]
     if print_info is not None:

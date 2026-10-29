@@ -485,3 +485,63 @@ def test_invoice_index_excludes_empty_and_keeps_identity(tmp_path: Path) -> None
         assert identity == ("2026-07-30", 106000, "示例乙酒店")
     finally:
         connection.close()
+
+
+def test_recent_import_paths_are_deduped_and_newest_first(tmp_path: Path) -> None:
+    connection = db.connect(tmp_path / "pool.db")
+    try:
+        db.remember_import_path(connection, r"D:\发票\2026-07")
+        db.remember_import_path(connection, r"D:\发票\2026-08")
+        db.remember_import_path(connection, r"d:\发票\2026-07")
+        connection.commit()
+        assert db.recent_import_paths(connection) == [
+            r"d:\发票\2026-07",
+            r"D:\发票\2026-08",
+        ]
+    finally:
+        connection.close()
+
+
+def test_recent_import_paths_are_bounded_and_corrupt_state_is_ignored(
+    tmp_path: Path,
+) -> None:
+    connection = db.connect(tmp_path / "pool.db")
+    try:
+        for index in range(12):
+            db.remember_import_path(connection, f"C:/invoices/{index}")
+        connection.commit()
+        paths = db.recent_import_paths(connection)
+        assert len(paths) == db.RECENT_IMPORT_LIMIT
+        assert paths[0] == "C:/invoices/11"
+
+        db.set_setting(connection, db.RECENT_IMPORT_KEY, "{not json")
+        connection.commit()
+        assert db.recent_import_paths(connection) == []
+    finally:
+        connection.close()
+
+
+def test_report_choices_are_ordered_by_use(tmp_path: Path) -> None:
+    from app.core import reports
+
+    connection = db.connect(tmp_path / "pool.db")
+    try:
+        for company, reporter in (
+            ("甲公司", "张三"),
+            ("甲公司", "张三"),
+            ("乙公司", "李四"),
+        ):
+            reports.create_report(
+                connection,
+                company=company,
+                reporter=reporter,
+                month="2026-07",
+                department="研发部",
+            )
+        connection.commit()
+        choices = db.report_choices(connection)
+        assert choices["company"] == ["甲公司", "乙公司"]
+        assert choices["reporter"] == ["张三", "李四"]
+        assert choices["department"] == ["研发部"]
+    finally:
+        connection.close()
