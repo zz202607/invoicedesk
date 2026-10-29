@@ -106,7 +106,8 @@
 - 前端仅内置 Vue 3.5.44；Tabulator/ECharts 延后（ADR-012/017）；781 行后端 93ms/411KB 已测，
   UI 渲染未测；CSP 仍含 `unsafe-eval` 且页面以 `file://` 加载，加固路线见 `docs/IDEAS.md`。
 - 本机 python_env 的 `_pth` 使 `python -m app` 找不到包，改用 `python run.py`；Python 3.13 venv
-  访问 PyPI 会 SSL EOF；本地校验用 `python_env`，CI 使用 GitHub 标准环境。
+  访问 PyPI 会 SSL EOF；本地校验用 `python_env`（3.11）。OCR 依赖 `rapidocr-onnxruntime`
+  要求 Python <3.13，CI 改跑 3.12，pyproject 最低版本改为 3.11。
 
 ## 链接
 

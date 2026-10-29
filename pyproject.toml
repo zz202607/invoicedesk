@@ -6,7 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "invoice-desk"
 version = "0.1.0"
 description = "Local-first invoice organizer and reimbursement sheet generator"
-requires-python = ">=3.13"
+# rapidocr-onnxruntime caps at <3.13; the packaged build runs Python 3.11.
+requires-python = ">=3.11"
 dependencies = [
     "pywebview>=5,<7",
     "PyMuPDF>=1.28,<1.29",

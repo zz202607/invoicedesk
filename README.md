@@ -30,9 +30,10 @@
 
 ## 计划技术栈
 
-Python 3.13 + pywebview（WebView2）+ SQLite + PyMuPDF + openpyxl + RapidOCR（本地 ONNX
-模型）；前端 Vue 3 本地内置、无 Node 构建，离线运行。Tabulator/ECharts 按需在后续阶段
-引入（ADR-012）。OCR 模型随程序打包，不上传任何票面。
+Python 3.11+（CI 用 3.12；OCR 依赖暂不支持 3.13）+ pywebview（WebView2）+ SQLite +
+PyMuPDF + openpyxl + RapidOCR（本地 ONNX 模型）；前端 Vue 3 本地内置、无 Node 构建，
+离线运行。Tabulator/ECharts 按需在后续阶段引入（ADR-012）。OCR 模型随程序打包，不上传
+任何票面。
 
 ## 开发
 
