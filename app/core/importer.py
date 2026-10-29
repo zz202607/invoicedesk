@@ -98,7 +98,8 @@ def _retry_unrecognized_duplicates(
         for row in connection.execute(
             "SELECT id FROM invoices"
             f" WHERE file_sha256 IN ({', '.join('?' for _ in hashes)})"
-            " AND invoice_type IN ('scanned', 'unknown', 'error')",
+            " AND invoice_type IN ('scanned', 'unknown', 'error')"
+            " AND archived_at = ''",
             hashes,
         )
     ]

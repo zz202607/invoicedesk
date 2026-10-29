@@ -23,7 +23,7 @@ from app.core.models import ParsedInvoice
 from app.core.paths import is_unsafe_repo_path, remote_storage_reason
 from app.core.text import normalize
 
-DB_VERSION = 5
+DB_VERSION = 6
 CENT = Decimal("0.01")
 DEFAULT_DB_PATH = Path("data") / "invoicedesk.db"
 
@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     confidence TEXT NOT NULL DEFAULT '{}',
     warnings TEXT NOT NULL DEFAULT '[]',
     needs_review INTEGER NOT NULL DEFAULT 0,
+    archived_at TEXT NOT NULL DEFAULT '',
     imported_at TEXT NOT NULL,
     UNIQUE (file_sha256, page_index)
 );
@@ -233,20 +234,35 @@ def _migrate(connection: sqlite3.Connection, version: int) -> None:
     is guarded so a partially migrated database stays usable.
     """
     if version < 4:
-        exists = connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table'"
-            " AND name = 'category_rules'"
-        ).fetchone()
-        columns = (
-            {row[1] for row in connection.execute("PRAGMA table_info(category_rules)")}
-            if exists
-            else set()
+        _add_missing_column(
+            connection,
+            "category_rules",
+            "enabled",
+            "enabled INTEGER NOT NULL DEFAULT 1",
         )
-        if exists and "enabled" not in columns:
-            connection.execute(
-                "ALTER TABLE category_rules"
-                " ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"
-            )
+    if version < 6:
+        _add_missing_column(
+            connection,
+            "invoices",
+            "archived_at",
+            "archived_at TEXT NOT NULL DEFAULT ''",
+        )
+
+
+def _add_missing_column(
+    connection: sqlite3.Connection, table: str, column: str, definition: str
+) -> None:
+    """Add a column to an existing table; a missing table is left to SCHEMA."""
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ).fetchone()
+    if not exists:
+        return
+    columns = {
+        row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+    }
+    if column not in columns:
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
 
 
 def money_to_cents(value: Decimal | None) -> int | None:
@@ -289,7 +305,7 @@ def invoice_index(
     index: dict[str, list[tuple[int, tuple[str, int | None, str]]]] = {}
     for row in connection.execute(
         "SELECT id, invoice_number, invoice_date, amount_total_cents, seller_name"
-        " FROM invoices WHERE invoice_number <> ''"
+        " FROM invoices WHERE invoice_number <> '' AND archived_at = ''"
     ):
         index.setdefault(row["invoice_number"], []).append(
             (row["id"], (row["invoice_date"], row["amount_total_cents"], row["seller_name"]))
@@ -491,7 +507,7 @@ def batch_stats(connection: sqlite3.Connection) -> list[BatchStats]:
                COALESCE(SUM(i.needs_review), 0) AS review_count,
                COALESCE(SUM(i.amount_total_cents), 0) AS amount_cents
         FROM batches b
-        LEFT JOIN invoices i ON i.batch_id = b.id
+        LEFT JOIN invoices i ON i.batch_id = b.id AND i.archived_at = ''
         GROUP BY b.id
         ORDER BY b.id
         """

@@ -65,6 +65,8 @@ createApp({
         category_refresh: '分类（规则更新）',
         review: '复核',
         warning: '警告',
+        archive: '归档',
+        conflict: '重复票',
       },
       poolVisible: true,
       editingCategoryId: null,
@@ -133,6 +135,12 @@ createApp({
       backups: [],
       backupDir: '',
       backupMax: 10,
+      showConflictModal: false,
+      conflictsLoading: false,
+      conflictsBusy: false,
+      conflictGroups: [],
+      conflictArchived: [],
+      conflictKeep: {},
       showDashboardModal: false,
       dashboardLoading: false,
       dashboard: null,
@@ -209,6 +217,7 @@ createApp({
         this.showMileageModal ||
         this.showRulesModal ||
         this.showBackupModal ||
+        this.showConflictModal ||
         this.showImportModal ||
         this.showDashboardModal ||
         this.showShortcutsModal ||
@@ -325,6 +334,7 @@ createApp({
         else if (this.showMileageModal) this.showMileageModal = false;
         else if (this.showRulesModal) this.showRulesModal = false;
         else if (this.showBackupModal) this.showBackupModal = false;
+        else if (this.showConflictModal) this.showConflictModal = false;
         else if (this.showImportModal) this.showImportModal = false;
         else if (this.preview) this.closePreview();
         return;
@@ -1218,6 +1228,136 @@ createApp({
     openBackupFromMenu() {
       this.moreMenuOpen = false;
       this.openBackupModal();
+    },
+
+    openConflictsFromMenu() {
+      this.moreMenuOpen = false;
+      this.openConflictModal();
+    },
+
+    openConflictModal() {
+      this.showConflictModal = true;
+      this.loadConflicts();
+    },
+
+    async loadConflicts() {
+      this.conflictsLoading = true;
+      try {
+        const data = await this.call('list_conflicts');
+        this.conflictGroups = data.groups;
+        this.conflictArchived = data.archived;
+        const keep = {};
+        for (const group of data.groups) {
+          // Prefer a record the user already reviewed, else the newest row
+          // (the API lists newest first) so the radio always has a default.
+          const confirmed = group.invoices.find((row) => !row.needs_review);
+          keep[group.invoice_number] = (confirmed || group.invoices[0]).id;
+        }
+        this.conflictKeep = keep;
+      } catch (error) {
+        /* surfaced already */
+      } finally {
+        this.conflictsLoading = false;
+      }
+    },
+
+    conflictArchiveIds(group) {
+      const keepId = Number(this.conflictKeep[group.invoice_number]);
+      return group.invoices
+        .filter((row) => row.id !== keepId)
+        .map((row) => row.id);
+    },
+
+    async resolveConflict(group) {
+      const keepId = Number(this.conflictKeep[group.invoice_number]);
+      const archiveIds = this.conflictArchiveIds(group);
+      if (!keepId || !archiveIds.length) {
+        this.notify('请选择要保留的那一张。', 'error');
+        return;
+      }
+      const keepRow = group.invoices.find((row) => row.id === keepId);
+      const linked = group.invoices.filter(
+        (row) => row.id !== keepId && row.linked
+      );
+      if (linked.length) {
+        this.notify(
+          '要归档的发票已关联报销单，请先从报销单移除再归档。',
+          'error',
+          8000
+        );
+        return;
+      }
+      if (
+        this.preview &&
+        this.previewDirty &&
+        archiveIds.includes(this.preview.invoice.id)
+      ) {
+        this.notify('当前发票有未保存的修正，请先保存或关闭预览。', 'error');
+        return;
+      }
+      const confirmed = window.confirm(
+        `保留 #${keepId}（${this.displayText(keepRow.seller_name, 20)} · ` +
+          `${keepRow.amount || '金额缺失'}），归档其余 ${archiveIds.length} 张？\n\n` +
+          '归档不会删除源发票文件，之后可在“已归档”中恢复。'
+      );
+      if (!confirmed) return;
+      this.conflictsBusy = true;
+      try {
+        const data = await this.call(
+          'resolve_conflict',
+          keepId,
+          archiveIds
+        );
+        if (this.preview) {
+          if (data.archived_ids.includes(this.preview.invoice.id)) {
+            this.preview = null;
+            this.previewForm = null;
+            this.invoiceEdits = [];
+          } else if (this.preview.invoice.id === data.invoice.id) {
+            this.preview = { ...this.preview, invoice: data.invoice };
+            this.previewForm = this.invoiceForm(data.invoice);
+            this.invoiceEdits = data.edits;
+          }
+        }
+        await this.loadConflicts();
+        await this.refreshInvoices(false);
+        await this.reloadBootstrap();
+        this.notify(
+          `已保留 #${keepId}，归档 ${data.archived_ids.length} 张。`,
+          'success',
+          7000
+        );
+      } catch (error) {
+        /* surfaced already */
+      } finally {
+        this.conflictsBusy = false;
+      }
+    },
+
+    async restoreArchived(row) {
+      const confirmed = window.confirm(
+        `恢复 #${row.id}（票号 ${row.invoice_number || '无'}）？\n\n` +
+          '如果仍有同号有效发票，恢复后会自动标记为冲突。'
+      );
+      if (!confirmed) return;
+      this.conflictsBusy = true;
+      try {
+        const data = await this.call('restore_invoice', row.id);
+        await this.loadConflicts();
+        await this.refreshInvoices(false);
+        await this.reloadBootstrap();
+        this.notify(
+          data.conflict_warning
+            ? `已恢复 #${row.id}，但仍与同号发票冲突，请再次核对。`
+            : `已恢复 #${row.id}。`,
+          data.conflict_warning ? 'info' : 'success',
+          8000
+        );
+      } catch (error) {
+        /* surfaced already */
+      } finally {
+        this.conflictsBusy = false;
+      }
     },
 
     openBackupModal() {

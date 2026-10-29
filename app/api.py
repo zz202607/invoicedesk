@@ -209,6 +209,7 @@ def _invoice_dict(row: workbench.InvoiceRow) -> dict[str, Any]:
         "confidence_notes": row.confidence_notes,
         "warning_text": row.warning_text,
         "needs_review": row.needs_review,
+        "archived_at": row.archived_at,
         "edit_count": row.edit_count,
         "linked": row.is_linked,
         "links": [
@@ -421,7 +422,9 @@ class Api:
             unrecognized = connection.execute(
                 "SELECT COUNT(*) FROM invoices"
                 " WHERE invoice_type IN ('scanned', 'unknown', 'error')"
+                " AND archived_at = ''"
             ).fetchone()[0]
+            conflict_groups = workbench.list_conflict_groups(connection)
             report_rows = reports.list_reports(connection)
             report_choices = db.report_choices(connection)
             recent_paths = [
@@ -449,6 +452,7 @@ class Api:
             "default_month": today.strftime("%Y-%m"),
             "db_name": self._db_path.name,
             "unrecognized_count": int(unrecognized),
+            "conflict_group_count": len(conflict_groups),
             "categories": list(CATEGORIES),
             "default_category": DEFAULT_CATEGORY,
             "mileage_rate": str(reports.DEFAULT_MILEAGE_RATE),
@@ -527,6 +531,51 @@ class Api:
                 }
                 for item in summary.months
             ],
+        }
+
+    @_endpoint
+    def list_conflicts(self) -> dict[str, Any]:
+        """Same-number groups plus the archived records that can come back."""
+        with contextlib.closing(self._connect()) as connection:
+            groups = workbench.list_conflict_groups(connection)
+            archived = workbench.list_invoices(connection, status="archived")
+        return {
+            "groups": [
+                {
+                    "invoice_number": group.invoice_number,
+                    "kind": group.kind,
+                    "kind_label": "重复票" if group.kind == "duplicate" else "同号冲突",
+                    "invoices": [_invoice_dict(row) for row in group.rows],
+                }
+                for group in groups
+            ],
+            "archived": [_invoice_dict(row) for row in archived],
+        }
+
+    @_endpoint
+    def resolve_conflict(
+        self, keep_id: int, archive_ids: list[int]
+    ) -> dict[str, Any]:
+        kept = _int_id(keep_id, "保留的发票编号")
+        ids = _invoice_ids(archive_ids)
+        with contextlib.closing(self._connect()) as connection:
+            result = invoices.resolve_conflicts(connection, kept, ids)
+            state = _invoice_state(connection, kept)
+        return {
+            **state,
+            "archived_ids": list(result.archived_ids),
+            "cleared_warnings": list(result.cleared_warnings),
+        }
+
+    @_endpoint
+    def restore_invoice(self, invoice_id: int) -> dict[str, Any]:
+        identifier = _int_id(invoice_id, "发票编号")
+        with contextlib.closing(self._connect()) as connection:
+            result = invoices.restore_invoice(connection, identifier)
+            state = _invoice_state(connection, identifier)
+        return {
+            **state,
+            "conflict_warning": result.conflict_warning,
         }
 
     @_endpoint

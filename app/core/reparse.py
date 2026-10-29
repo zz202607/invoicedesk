@@ -79,7 +79,10 @@ def reparse_unrecognized(
     that produces a number already in the pool keeps both records and flags
     the conflict instead of deleting.
     """
-    where = [f"invoice_type IN ({', '.join('?' for _ in TARGET_TYPES)})"]
+    where = [
+        f"invoice_type IN ({', '.join('?' for _ in TARGET_TYPES)})",
+        "archived_at = ''",
+    ]
     params: list[object] = list(TARGET_TYPES)
     if invoice_ids:
         where.append(f"id IN ({', '.join('?' for _ in invoice_ids)})")
@@ -137,7 +140,8 @@ def reparse_unrecognized(
             conflict = False
             if number:
                 others = connection.execute(
-                    "SELECT id FROM invoices WHERE invoice_number = ? AND id <> ?",
+                    "SELECT id FROM invoices WHERE invoice_number = ? AND id <> ?"
+                    " AND archived_at = ''",
                     (number, invoice_id),
                 ).fetchall()
                 if others:

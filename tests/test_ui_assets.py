@@ -298,3 +298,16 @@ def test_one_click_export_and_arrow_navigation_are_wired() -> None:
     assert "↑/↓ 切换" in html
     assert ".export-groups" in css
     assert ".notice-bar" in css
+
+
+def test_duplicate_conflict_review_is_wired_to_the_bridge() -> None:
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    assert "重复票审查" in html
+    assert "保留所选，归档其余" in html
+    assert "已归档" in html
+    assert "归档不会删除源发票文件" in html
+    for method in ("list_conflicts", "resolve_conflict", "restore_invoice"):
+        assert method in script
+    assert "openConflictModal" in script
+    assert "conflictKeep" in script

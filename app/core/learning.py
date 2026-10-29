@@ -191,7 +191,8 @@ def seller_usage(connection: sqlite3.Connection) -> dict[str, int]:
     """Invoice counts per normalized seller key, for the rules screen."""
     counts: dict[str, int] = {}
     for row in connection.execute(
-        "SELECT seller_name FROM invoices WHERE seller_name <> ''"
+        "SELECT seller_name FROM invoices"
+        " WHERE seller_name <> '' AND archived_at = ''"
     ):
         key = seller_key(row["seller_name"])
         if key:
@@ -237,7 +238,7 @@ def _backfill_candidates(
     """
     rows = connection.execute(
         "SELECT id, invoice_date, seller_name, category, category_rule,"
-        " amount_total_cents, confidence FROM invoices"
+        " amount_total_cents, confidence FROM invoices WHERE archived_at = ''"
         " ORDER BY CASE WHEN invoice_date = '' THEN 1 ELSE 0 END,"
         " invoice_date DESC, id DESC"
     ).fetchall()

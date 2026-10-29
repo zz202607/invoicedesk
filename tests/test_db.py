@@ -686,3 +686,48 @@ def test_current_rules_version_skips_the_refresh_pass(tmp_path: Path) -> None:
         assert tuple(row) == ("差旅费", "seller.hotel")
     finally:
         connection.close()
+
+
+def test_v5_database_gains_archived_at_column(tmp_path: Path) -> None:
+    """Archiving needs a v6 column; old pools must migrate without data loss."""
+    path = tmp_path / "v5.db"
+    connection = db.connect(path)
+    try:
+        batch_id = db.create_batch(
+            connection, label="旧批次", source_dir=r"D:\invoices"
+        )
+        db.insert_file(
+            connection,
+            sha256="old-sha",
+            batch_id=batch_id,
+            source_path=r"D:\invoices\a.pdf",
+            page_count=1,
+        )
+        invoice_id = db.insert_invoice(
+            connection,
+            batch_id=batch_id,
+            sha256="old-sha",
+            invoice=sample_invoice(),
+        )
+        connection.commit()
+        # Rewind the schema to v5 and drop the column added in v6.
+        connection.execute("ALTER TABLE invoices DROP COLUMN archived_at")
+        connection.execute("PRAGMA user_version = 5")
+        connection.commit()
+    finally:
+        connection.close()
+
+    connection = db.connect(path)
+    try:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == db.DB_VERSION
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(invoices)")
+        }
+        assert "archived_at" in columns
+        row = connection.execute(
+            "SELECT invoice_number, archived_at FROM invoices WHERE id = ?",
+            (invoice_id,),
+        ).fetchone()
+        assert tuple(row) == ("26502000000000000001", "")
+    finally:
+        connection.close()
