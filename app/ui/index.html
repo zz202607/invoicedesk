@@ -160,6 +160,7 @@
                 </th>
                 <th>日期</th>
                 <th>票号</th>
+                <th title="购买方（发票抬头公司）">公司</th>
                 <th>销售方</th>
                 <th class="num">金额</th>
                 <th>分类</th>
@@ -181,9 +182,28 @@
                   {{ row.invoice_number || '（无票号）' }}
                   <span v-if="!row.source_exists" class="missing" title="源文件不存在">!</span>
                 </td>
+                <td class="ellipsis" :title="row.buyer_name">{{ row.buyer_name || '—' }}</td>
                 <td class="ellipsis" :title="row.seller_name">{{ row.seller_name || '—' }}</td>
                 <td class="num mono">{{ row.amount ? '¥' + row.amount : '缺失' }}</td>
-                <td><span class="tag">{{ row.category }}</span></td>
+                <td class="category-cell" @click.stop>
+                  <select
+                    v-if="editingCategoryId === row.id"
+                    ref="categorySelect"
+                    class="category-select"
+                    v-model="categoryDraft"
+                    @change="commitCategory(row, $event)"
+                    @blur="cancelCategoryEdit(row)"
+                    @keydown.esc.stop.prevent="cancelCategoryEdit(row)"
+                  >
+                    <option v-for="name in categoryChoices" :key="name" :value="name">{{ name }}</option>
+                  </select>
+                  <button
+                    v-else
+                    class="tag clickable-tag"
+                    title="点击修改分类"
+                    @click="startCategoryEdit(row)"
+                  >{{ row.category }}</button>
+                </td>
                 <td class="status-cell">
                   <span v-if="row.needs_review" class="badge warn">待确认</span>
                   <span

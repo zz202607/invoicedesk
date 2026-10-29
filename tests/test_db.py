@@ -545,3 +545,144 @@ def test_report_choices_are_ordered_by_use(tmp_path: Path) -> None:
         assert choices["department"] == ["研发部"]
     finally:
         connection.close()
+
+
+def test_reopening_refreshes_stale_builtin_category_with_audit(tmp_path: Path) -> None:
+    path = tmp_path / "pool.db"
+    connection = db.connect(path)
+    try:
+        invoice_id = insert_sample(
+            connection,
+            sample_invoice(
+                source_path=r"D:\invoices\餐费.pdf",
+                seller_name="示例江景酒店",
+                item_summary="餐饮服务",
+                category="差旅费",
+                category_rule="seller.hotel",
+            ),
+        )
+        # Simulate a pool last written by an older build: no rules version yet.
+        connection.execute(
+            "DELETE FROM settings WHERE key = 'category_rules_version'"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    connection = db.connect(path)
+    try:
+        row = connection.execute(
+            "SELECT category, category_rule FROM invoices WHERE id = ?",
+            (invoice_id,),
+        ).fetchone()
+        assert tuple(row) == ("餐饮费", "item.meal")
+        edits = [
+            tuple(edit)
+            for edit in connection.execute(
+                "SELECT field, old_value, new_value FROM invoice_edits"
+                " WHERE invoice_id = ? ORDER BY id",
+                (invoice_id,),
+            )
+        ]
+        assert edits == [("category_refresh", "差旅费", "餐饮费")]
+        assert db.get_setting(connection, "category_rules_version")
+
+        # A rules refresh is not a human correction: the workbench badge and
+        # the dashboard "已修正" count must stay at zero.
+        from app.core import workbench
+
+        listed = workbench.list_invoices(connection)
+        assert [(row.id, row.edit_count) for row in listed] == [(invoice_id, 0)]
+        assert workbench.dashboard_summary(listed).edited_count == 0
+    finally:
+        connection.close()
+
+
+def test_refresh_keeps_manual_and_learned_categories(tmp_path: Path) -> None:
+    path = tmp_path / "pool.db"
+    connection = db.connect(path)
+    try:
+        manual_id = insert_sample(
+            connection,
+            sample_invoice(
+                page_index=0,
+                seller_name="示例江景酒店",
+                item_summary="餐饮服务",
+                category="其他费用",
+                category_rule="manual",
+            ),
+        )
+        learned_id = insert_sample(
+            connection,
+            sample_invoice(
+                page_index=1,
+                seller_name="示例江景酒店",
+                item_summary="餐饮服务",
+                category="差旅费",
+                category_rule="learned.seller",
+            ),
+        )
+        connection.execute(
+            "DELETE FROM settings WHERE key = 'category_rules_version'"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    connection = db.connect(path)
+    try:
+        rows = {
+            row[0]: (row[1], row[2])
+            for row in connection.execute(
+                "SELECT id, category, category_rule FROM invoices"
+            )
+        }
+        assert rows[manual_id] == ("其他费用", "manual")
+        assert rows[learned_id] == ("差旅费", "learned.seller")
+        assert connection.execute("SELECT COUNT(*) FROM invoice_edits").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+
+def test_current_rules_version_skips_the_refresh_pass(tmp_path: Path) -> None:
+    from app.core.categories import RULES_VERSION
+
+    path = tmp_path / "pool.db"
+    connection = db.connect(path)
+    try:
+        invoice_id = insert_sample(
+            connection,
+            sample_invoice(
+                seller_name="示例江景酒店",
+                item_summary="餐饮服务",
+                category="差旅费",
+                category_rule="seller.hotel",
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    # First reopen applies the refresh; afterwards the version marker is
+    # current, so a hand-written stale value must survive the next open.
+    connection = db.connect(path)
+    try:
+        connection.execute(
+            "UPDATE invoices SET category = '差旅费', category_rule = 'seller.hotel'"
+            " WHERE id = ?",
+            (invoice_id,),
+        )
+        connection.commit()
+        assert db.get_setting(connection, "category_rules_version") == str(RULES_VERSION)
+    finally:
+        connection.close()
+
+    connection = db.connect(path)
+    try:
+        row = connection.execute(
+            "SELECT category, category_rule FROM invoices WHERE id = ?",
+            (invoice_id,),
+        ).fetchone()
+        assert tuple(row) == ("差旅费", "seller.hotel")
+    finally:
+        connection.close()

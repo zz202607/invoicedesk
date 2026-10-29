@@ -10,6 +10,14 @@ from dataclasses import dataclass
 
 DEFAULT_CATEGORY = "其他费用"
 
+# Bump whenever the built-in rules below change in a way that should apply to
+# invoices already in the pool. ``db.init_db`` reclassifies rows whose
+# ``category_rule`` names a built-in rule once per version; manual corrections
+# and learned seller rules are never overwritten. Version 2 is the hotel-meal
+# override (a hotel billing 餐饮服务 is a meal, not lodging), so pools built by
+# earlier builds stop keeping those invoices in 差旅费.
+RULES_VERSION = 2
+
 # The nine categories used by the reimbursement sheets, in the order they
 # appear in 票据分类.doc. The UI offers these as suggestions; custom values
 # typed by the user are still accepted.

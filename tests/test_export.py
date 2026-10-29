@@ -350,12 +350,15 @@ def test_workbook_sheets_values_and_no_leaked_paths(tmp_path: Path) -> None:
     assert categories["A2"].value == "差旅费"
     assert categories["B2"].value == 2
     assert float(categories["E2"].value) == 1150.0
-    assert abs(float(categories["F2"].value) - 1150 / 1200) < 1e-9
+    assert categories["F2"].value == "壹仟壹佰伍拾元整"
+    assert abs(float(categories["G2"].value) - 1150 / 1200) < 1e-9
     assert categories["A3"].value == "办公费用"
     assert float(categories["E3"].value) == 50.0
+    assert categories["F3"].value == "伍拾元整"
     assert float(categories["E4"].value) == 1200.0
-    assert categories["A5"].value == "价税合计（大写）"
-    assert categories["B5"].value == "壹仟贰佰元整"
+    assert categories["F4"].value == "壹仟贰佰元整"
+    assert float(categories["G4"].value) == 1.0
+    assert categories["A5"].value is None
 
     buyers = workbook["公司汇总"]
     assert buyers["A2"].value == "示例甲公司"
@@ -749,14 +752,17 @@ def test_workbook_handles_negative_amounts_and_zero_total(tmp_path: Path) -> Non
     categories = workbook["分类汇总"]
     assert categories["A2"].value == "差旅费"
     assert float(categories["E2"].value) == 1060.0
+    assert categories["F2"].value == "壹仟零陆拾元整"
     assert categories["A3"].value == "其他费用"
     assert float(categories["E3"].value) == -1060.0
+    assert categories["F3"].value == "负壹仟零陆拾元整"
     # A zero net total cannot produce a meaningful share; show 0.0% instead
     # of dividing by zero.
-    assert float(categories["F2"].value) == 0.0
-    assert float(categories["F3"].value) == 0.0
+    assert float(categories["G2"].value) == 0.0
+    assert float(categories["G3"].value) == 0.0
     assert float(categories["E4"].value) == 0.0
-    assert float(categories["F4"].value) == 0.0
+    assert categories["F4"].value == "零元整"
+    assert float(categories["G4"].value) == 0.0
 
 
 def test_workbook_handles_rows_without_any_amounts(tmp_path: Path) -> None:
@@ -802,8 +808,10 @@ def test_workbook_handles_rows_without_any_amounts(tmp_path: Path) -> None:
 
     categories = workbook["分类汇总"]
     assert float(categories["E3"].value) == 0.0
-    assert float(categories["F2"].value) == 0.0
-    assert float(categories["F3"].value) == 0.0
+    assert categories["F2"].value == "零元整"
+    assert categories["F3"].value == "零元整"
+    assert float(categories["G2"].value) == 0.0
+    assert float(categories["G3"].value) == 0.0
 
     meta = {
         row[0].value: row[1].value

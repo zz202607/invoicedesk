@@ -518,10 +518,18 @@ def test_export_evidence(api: Api, tmp_path) -> None:
     group = data["groups"][0]
     assert (group["company"], group["category"]) == ("示例公司", "办公费用")
     assert group["count"] == 1
+    assert group["total"] == "120.00"
     assert group["source_pages"] == 1
     assert group["pages"] == 1
     assert Path(group["path"]).is_file()
+    assert Path(group["path"]).name == "办公费用-120.00元.pdf"
     assert Path(group["path"]).parent.parent == Path(data["group_dir"])
+    merged = data["merged"][0]
+    assert merged["company"] == "示例公司"
+    assert merged["count"] == 1
+    assert merged["total"] == "120.00"
+    assert Path(merged["path"]).is_file()
+    assert Path(merged["path"]).name == "总合并-120.00元.pdf"
 
     grouped = api.export_evidence({"buyer": "示例公司"}, company_hint="示例")
     assert grouped["ok"] is True, grouped

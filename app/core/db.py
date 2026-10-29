@@ -216,6 +216,12 @@ def init_db(connection: sqlite3.Connection) -> None:
         connection.executescript(SCHEMA)
         connection.execute(f"PRAGMA user_version = {DB_VERSION}")
         connection.commit()
+    # Imported lazily: recategorize imports this module, and it must be fully
+    # initialized before the first refresh runs. The pass is version-gated, so
+    # an up-to-date pool pays one settings lookup.
+    from app.core.recategorize import refresh_builtin_categories
+
+    refresh_builtin_categories(connection)
 
 
 def _migrate(connection: sqlite3.Connection, version: int) -> None:

@@ -58,10 +58,14 @@ createApp({
         category: '分类',
         item_summary: '项目',
         category_rule: '分类来源',
+        category_refresh: '分类（规则更新）',
         review: '复核',
         warning: '警告',
       },
       poolVisible: true,
+      editingCategoryId: null,
+      categoryDraft: '',
+      categorySaving: false,
       quickProject: '',
       layout: 'project',
       showReportModal: false,
@@ -177,6 +181,23 @@ createApp({
         dark: '深色',
       };
       return labels[this.themeMode] || '自动';
+    },
+    categoryChoices() {
+      const names = [];
+      const seen = new Set();
+      for (const name of this.boot.categories || []) {
+        if (name && !seen.has(name)) {
+          seen.add(name);
+          names.push(name);
+        }
+      }
+      for (const row of this.invoices) {
+        if (row.category && !seen.has(row.category)) {
+          seen.add(row.category);
+          names.push(row.category);
+        }
+      }
+      return names;
     },
     categoryMax() {
       const items = this.dashboard ? this.dashboard.categories : [];
@@ -737,6 +758,12 @@ createApp({
         this.showImportModal = false;
         this.unrecognizedDismissed = false;
         await this.reloadBootstrap();
+        if (data.batch_id != null) {
+          // Focus the fresh batch so the just-imported rows — company and
+          // category — are what the user sees first.
+          this.filters.batch_id = String(data.batch_id);
+          this.poolVisible = true;
+        }
         await this.refreshInvoices(true);
         let message =
           `导入完成：新增 ${data.invoices_imported} 张，` +
@@ -987,12 +1014,19 @@ createApp({
             path: data.group_dir,
           });
         }
+        for (const merged of data.merged || []) {
+          items.push({
+            label: `总合并 PDF（${merged.company}，${merged.pages} 页，¥${merged.total}）`,
+            path: merged.path,
+          });
+        }
         this.exportResult = {
           title: '证据包已导出',
           summary:
             `共 ${data.count} 张发票（待确认 ${data.review_count}），` +
             `合计 ¥${data.total}；打印 PDF ${data.pages} 页，` +
-            `分类 PDF（按公司/分类，A4 二合一，无标注）${data.group_count || 0} 个。`,
+            `分类 PDF（按公司/分类，A4 二合一，无标注）${data.group_count || 0} 个，` +
+            `总合并 PDF ${(data.merged || []).length} 个。`,
           note: data.notice_only ? '部分票面为通知单，PDF 中已按唯一票面去重。' : '',
           kind: 'export',
           items,
@@ -1011,6 +1045,57 @@ createApp({
         await this.call('open_output_folder', this.exportResult.kind);
       } catch (error) {
         /* surfaced already */
+      }
+    },
+
+    /* ------------------------------------------------------ category edit */
+
+    startCategoryEdit(row) {
+      if (this.categorySaving) return;
+      this.editingCategoryId = row.id;
+      this.categoryDraft = row.category || '';
+      this.$nextTick(() => {
+        // A ref inside v-for collects into an array; only one editor exists.
+        const refs = this.$refs.categorySelect;
+        const select = Array.isArray(refs) ? refs[0] : refs;
+        if (select) select.focus();
+      });
+    },
+
+    cancelCategoryEdit(row) {
+      if (this.editingCategoryId === row.id) this.editingCategoryId = null;
+    },
+
+    async commitCategory(row, event) {
+      const raw = event && event.target ? event.target.value : this.categoryDraft;
+      const value = String(raw || '').trim();
+      this.editingCategoryId = null;
+      if (!value || value === (row.category || '') || this.categorySaving) return;
+      const previous = row.category;
+      const seller = row.seller_name || '该销售方';
+      row.category = value;
+      this.categorySaving = true;
+      try {
+        const data = await this.call('update_invoice', row.id, { category: value });
+        if (this.preview && this.preview.invoice.id === row.id) {
+          this.preview = { ...this.preview, invoice: data.invoice };
+          this.previewForm = { ...this.previewForm, category: data.invoice.category };
+          this.invoiceEdits = data.edits;
+        }
+        await this.refreshInvoices(false);
+        let message =
+          `已把「${this.displayText(seller, 40)}」归入「` +
+          `${this.displayText(data.invoice.category, 20)}」。`;
+        if (data.rule) message += this.ruleNotice(data.rule);
+        if (data.invoice.linked) {
+          message += ' 该票已关联报销单；报销行的费用名称需在报销单中修改。';
+        }
+        this.notify(message, 'success', 9000);
+      } catch (error) {
+        row.category = previous;
+        /* call() already surfaced the message */
+      } finally {
+        this.categorySaving = false;
       }
     },
 
@@ -1066,6 +1151,15 @@ createApp({
       }
     },
 
+    ruleNotice(rule) {
+      if (!rule) return '';
+      const label = this.displayText(rule.pattern, 40);
+      const category = this.displayText(rule.category, 20);
+      return rule.enabled
+        ? ` 已记住：以后导入「${label}」自动归入「${category}」。`
+        : ` 规则「${label}」当前已停用，本次只改这张发票；启用后才会影响新导入。`;
+    },
+
     async saveInvoiceEdits() {
       if (!this.preview || !this.previewForm || !this.previewDirty) return;
       this.previewSaving = true;
@@ -1083,13 +1177,7 @@ createApp({
         if (data.conflict) {
           message += ' 票号与既有发票重复或冲突，双方已标记待确认，请核对。';
         }
-        if (data.rule) {
-          const label = this.displayText(data.rule.pattern, 40);
-          const category = this.displayText(data.rule.category, 20);
-          message += data.rule.enabled
-            ? ` 已记住：以后导入「${label}」自动归入「${category}」。`
-            : ` 规则「${label}」当前已停用，本次只改这张发票；启用后才会影响新导入。`;
-        }
+        if (data.rule) message += this.ruleNotice(data.rule);
         this.notify(message, data.conflict ? 'info' : 'success', 9000);
       } catch (error) {
         /* call() already surfaced the message */
