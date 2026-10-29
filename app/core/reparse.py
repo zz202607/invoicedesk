@@ -74,9 +74,10 @@ def reparse_unrecognized(
 ) -> ReparseResult:
     """Retry OCR for unrecognized invoices and update them in place.
 
-    Invoices with manual corrections are skipped so a reparse can never
-    overwrite a human decision. A reparse that produces a number already in
-    the pool keeps both records and flags the conflict instead of deleting.
+    Invoices with field corrections are skipped so a reparse can never
+    overwrite a human decision; review-only audit rows do not count. A reparse
+    that produces a number already in the pool keeps both records and flags
+    the conflict instead of deleting.
     """
     where = [f"invoice_type IN ({', '.join('?' for _ in TARGET_TYPES)})"]
     params: list[object] = list(TARGET_TYPES)
@@ -91,9 +92,15 @@ def reparse_unrecognized(
     if not rows:
         return ReparseResult(0, 0, 0, 0, 0, 0)
 
+    # “确认无误” writes a review audit row, not a field correction. Treating
+    # that as a manual edit would permanently block OCR recovery on exactly the
+    # scanned invoices a user marked reviewed while waiting for OCR.
     edited = {
         row["invoice_id"]
-        for row in connection.execute("SELECT DISTINCT invoice_id FROM invoice_edits")
+        for row in connection.execute(
+            "SELECT DISTINCT invoice_id FROM invoice_edits"
+            " WHERE field NOT IN ('review', 'warning')"
+        )
     }
     rules = learning.seller_rules(connection)
     parsed_cache: dict[str, list[ParsedInvoice]] = {}

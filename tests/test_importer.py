@@ -231,6 +231,86 @@ def test_reimport_same_folder_creates_no_batch(tmp_path: Path) -> None:
         connection.close()
 
 
+def test_reimport_retries_old_scanned_records(tmp_path: Path, monkeypatch) -> None:
+    """A hash-skipped file must still gain OCR fields when the row is old."""
+    monkeypatch.setattr("app.core.ocr.is_available", lambda: True)
+    folder = tmp_path / "october"
+    write_invoice(folder, "a.pdf")
+
+    connection = db.connect(tmp_path / "invoices.db")
+    try:
+        import_folder(connection, folder)
+        connection.execute(
+            "UPDATE invoices SET invoice_type = 'scanned', invoice_number = '',"
+            " invoice_date = '', seller_name = '', buyer_name = '',"
+            " amount_total_cents = NULL"
+        )
+        connection.commit()
+
+        summary = import_folder(connection, folder)
+
+        assert summary.batch_id is None
+        assert summary.files_imported == 0
+        assert summary.files_duplicate == 1
+        assert summary.reparse_candidates == 1
+        assert summary.reparsed == 1
+        assert summary.reparse_failed == 0
+        row = connection.execute("SELECT * FROM invoices").fetchone()
+        assert row["invoice_type"] == "full_digital_normal"
+        assert row["invoice_number"] == "26502000000000000001"
+        assert row["seller_name"] == "示例乙酒店"
+        assert row["amount_total_cents"] == 106000
+    finally:
+        connection.close()
+
+
+def test_reimport_skips_reparse_when_ocr_is_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.core.ocr.is_available", lambda: False)
+    folder = tmp_path / "october"
+    write_invoice(folder, "a.pdf")
+
+    connection = db.connect(tmp_path / "invoices.db")
+    try:
+        import_folder(connection, folder)
+        connection.execute(
+            "UPDATE invoices SET invoice_type = 'scanned', invoice_number = ''"
+        )
+        connection.commit()
+
+        summary = import_folder(connection, folder)
+
+        assert summary.reparse_candidates == 0
+        assert summary.reparsed == 0
+        row = connection.execute("SELECT invoice_type FROM invoices").fetchone()
+        assert row["invoice_type"] == "scanned"
+    finally:
+        connection.close()
+
+
+def test_reimport_does_not_touch_recognized_duplicates(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.core.ocr.is_available", lambda: True)
+    called: list[object] = []
+    monkeypatch.setattr(
+        "app.core.reparse.reparse_unrecognized",
+        lambda *args, **kwargs: called.append((args, kwargs)),
+    )
+    folder = tmp_path / "october"
+    write_invoice(folder, "a.pdf")
+
+    connection = db.connect(tmp_path / "invoices.db")
+    try:
+        import_folder(connection, folder)
+        summary = import_folder(connection, folder)
+        assert summary.reparse_candidates == 0
+        assert called == []
+    finally:
+        connection.close()
+
+
 def test_same_invoice_number_in_another_file_is_skipped(tmp_path: Path) -> None:
     july = tmp_path / "july"
     august = tmp_path / "august"

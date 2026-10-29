@@ -172,6 +172,47 @@ input[type="checkbox"] {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.layout.with-notice {
+  height: calc(100vh - 100px);
+}
+
+/* ------------------------------------------------------ unrecognized bar */
+
+.notice-bar {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  background: var(--warn-bg);
+  border-bottom: 1px solid var(--line);
+  color: var(--warn);
+}
+
+.notice-mark {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--warn);
+  color: #fff;
+  font-weight: 700;
+  font-size: 12px;
+  flex: none;
+}
+
+.notice-bar .btn {
+  padding: 5px 12px;
+}
+
+.notice-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -278,6 +319,23 @@ input[type="checkbox"] {
 .export-menu-wrap,
 .more-menu-wrap {
   position: relative;
+}
+
+.export-menu-wrap {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.export-menu-wrap .export-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.export-menu-wrap .export-caret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.35);
+  padding: 8px 10px;
 }
 
 .export-menu {
@@ -908,6 +966,16 @@ input[type="checkbox"] {
   font-weight: 700;
 }
 
+.preview-nav-hint {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
 .preview-fields {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1062,6 +1130,34 @@ input[type="checkbox"] {
   font-size: 12px;
   word-break: break-all;
   user-select: all;
+}
+
+.export-groups {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.export-groups-title {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.export-group-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.export-group-row .ellipsis {
+  flex: 1;
+  min-width: 0;
 }
 
 .form-grid {

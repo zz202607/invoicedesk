@@ -17,9 +17,10 @@ import pytest
 import app.api as api_module
 from app.api import Api, _batch_id, _int_id
 from app.core import db
+from app.core.models import InvoiceType
 from app.core.paths import output_path_reason
 from app.core.reports import ReportError
-from tests.pdf_factory import make_pdf
+from tests.pdf_factory import full_digital_lines, make_pdf
 from tests.report_factory import add_invoice
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +92,7 @@ def test_bootstrap_envelope(api: Api) -> None:
     assert [layout["key"] for layout in data["layouts"]] == ["project", "company", "plain"]
     assert data["reports"] == []
     assert data["db_name"] == "workbench.db"
+    assert data["unrecognized_count"] == 0
     assert data["recent_import_paths"] == []
     assert data["report_choices"] == {
         "company": [],
@@ -98,6 +100,26 @@ def test_bootstrap_envelope(api: Api) -> None:
         "reporter": [],
     }
     assert "db_path" not in data
+
+
+def test_bootstrap_counts_unrecognized_invoices(api: Api, tmp_path: Path) -> None:
+    connection = db.connect(tmp_path / "workbench.db")
+    try:
+        add_invoice(
+            connection,
+            index=9,
+            number="SCAN1",
+            invoice_type=InvoiceType.SCANNED,
+            amount=None,
+        )
+        add_invoice(connection, index=10, number="OK1")
+    finally:
+        connection.close()
+
+    response = api.bootstrap()
+
+    assert response["ok"] is True
+    assert response["data"]["unrecognized_count"] == 1
 
 
 def test_dashboard_envelope_and_filters(api: Api, tmp_path: Path) -> None:
@@ -492,6 +514,16 @@ def test_export_evidence(api: Api, tmp_path) -> None:
     assert Path(data["pdf_path"]).is_file()
     assert data["count"] == 1
     assert data["total"] == "120.00"
+    assert data["group_count"] == 1
+    group = data["groups"][0]
+    assert (group["company"], group["category"]) == ("示例公司", "办公费用")
+    assert group["count"] == 1
+    assert Path(group["path"]).is_file()
+    assert Path(group["path"]).parent.parent == Path(data["group_dir"])
+
+    grouped = api.export_evidence({"buyer": "示例公司"}, company_hint="示例")
+    assert grouped["ok"] is True, grouped
+    assert grouped["data"]["groups"][0]["path"] == group["path"]
 
     none = api.export_evidence({"date_from": "2027-01-01"})
     assert none["ok"] is False
@@ -954,6 +986,21 @@ def test_import_errors(api: Api, tmp_path) -> None:
     missing = api.import_folder(str(tmp_path / "nope"))
     assert missing["ok"] is False
     assert "不存在" in missing["error"]
+
+
+def test_import_folder_reports_auto_reparse_fields(api: Api, tmp_path) -> None:
+    folder = tmp_path / "october"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    response = api.import_folder(str(folder))
+
+    assert response["ok"] is True, response
+    data = response["data"]
+    assert data["invoices_imported"] == 1
+    assert data["reparse_candidates"] == 0
+    assert data["reparsed"] == 0
+    assert data["reparse_failed"] == 0
 
 
 def _learn_rule(api: Api, invoice_id: int, category: str = "餐饮费") -> dict:

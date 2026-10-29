@@ -161,6 +161,7 @@ def list_invoices(
     date_to: str = "",
     include_review: bool = True,
     unlinked_only: bool = False,
+    unrecognized_only: bool = False,
     search: str = "",
     invoice_id: int | None = None,
 ) -> list[InvoiceRow]:
@@ -189,6 +190,8 @@ def list_invoices(
             "NOT EXISTS (SELECT 1 FROM report_line_invoices li"
             " WHERE li.invoice_id = i.id)"
         )
+    if unrecognized_only:
+        where.append("i.invoice_type IN ('scanned', 'unknown', 'error')")
     if search:
         pattern = _like_pattern(search)
         where.append(

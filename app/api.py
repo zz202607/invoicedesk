@@ -32,6 +32,7 @@ from app.core.export import (
     redact_paths,
 )
 from app.core.export import summarize as summarize_export
+from app.core.group_pdf import GROUP_DIRNAME, write_group_pdfs
 from app.core.paths import output_path_reason
 from app.core.print_pdf import PRINT_FILENAME, write_print_pdf
 from app.core.report_export import LAYOUTS, report_filename, write_report_workbook
@@ -300,6 +301,7 @@ def _invoice_filters(payload: dict[str, Any]) -> dict[str, Any]:
         "date_to": date_to,
         "include_review": bool(payload.get("include_review", True)),
         "unlinked_only": bool(payload.get("unlinked_only", False)),
+        "unrecognized_only": bool(payload.get("unrecognized_only", False)),
         "search": str(payload.get("search") or "").strip(),
     }
 
@@ -386,6 +388,10 @@ class Api:
         today = date.today()
         with contextlib.closing(self._connect()) as connection:
             batches = db.batch_stats(connection)
+            unrecognized = connection.execute(
+                "SELECT COUNT(*) FROM invoices"
+                " WHERE invoice_type IN ('scanned', 'unknown', 'error')"
+            ).fetchone()[0]
             report_rows = reports.list_reports(connection)
             report_choices = db.report_choices(connection)
             recent_paths = [
@@ -412,6 +418,7 @@ class Api:
             "today": today.isoformat(),
             "default_month": today.strftime("%Y-%m"),
             "db_name": self._db_path.name,
+            "unrecognized_count": int(unrecognized),
             "categories": list(CATEGORIES),
             "default_category": DEFAULT_CATEGORY,
             "mileage_rate": str(reports.DEFAULT_MILEAGE_RATE),
@@ -867,9 +874,14 @@ class Api:
         }
 
     @_endpoint
-    def export_evidence(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+    def export_evidence(
+        self,
+        filters: dict[str, Any] | None = None,
+        company_hint: str = "",
+    ) -> dict[str, Any]:
         out = self._output_dir("export")
         export_filters = _export_filters(filters or {})
+        hint = str(company_hint or "").strip()[:200]
         with contextlib.closing(self._connect()) as connection:
             rows: list[ExportRow] = collect_rows(connection, export_filters)
             summary = summarize_export(rows)
@@ -878,6 +890,7 @@ class Api:
         generated_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
         excel_path = out / EXCEL_FILENAME
         print_path = out / PRINT_FILENAME
+        group_dir = out / GROUP_DIRNAME
         stamp = uuid4().hex[:8]
         temp_excel = out / f".{EXCEL_FILENAME}.{stamp}.tmp"
         temp_print = out / f".{PRINT_FILENAME}.{stamp}.tmp"
@@ -899,9 +912,22 @@ class Api:
             for temp in (temp_excel, temp_print):
                 if temp.exists():
                     temp.unlink(missing_ok=True)
+        groups = write_group_pdfs(group_dir, rows, fallback_company=hint)
         return {
             "excel_path": str(excel_path),
             "pdf_path": str(print_path),
+            "group_dir": groups.directory,
+            "group_count": len(groups.groups),
+            "groups": [
+                {
+                    "company": group.company,
+                    "category": group.category,
+                    "count": group.count,
+                    "pages": group.pages,
+                    "path": group.path,
+                }
+                for group in groups.groups
+            ],
             "count": summary.count,
             "review_count": summary.review_count,
             "total": _money(summary.total_cents),
@@ -965,5 +991,8 @@ class Api:
             "invoices_conflict": summary.invoices_conflict,
             "needs_review": summary.needs_review,
             "amount": f"{summary.amount_total:.2f}",
+            "reparse_candidates": summary.reparse_candidates,
+            "reparsed": summary.reparsed,
+            "reparse_failed": summary.reparse_failed,
         }
 

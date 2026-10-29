@@ -139,6 +139,19 @@ def test_export_end_to_end_writes_excel_and_pdf(tmp_path: Path, capsys) -> None:
     finally:
         document.close()
 
+    group_dir = output / "发票分组"
+    assert (group_dir / "示例甲公司" / "差旅费.pdf").is_file()
+    assert (group_dir / "示例乙公司" / "餐饮费.pdf").is_file()
+    assert "分类 PDF" in captured.out
+    assert "示例甲公司 / 差旅费" in captured.out
+    grouped = fitz.open(group_dir / "示例甲公司" / "差旅费.pdf")
+    try:
+        # Clean merge: only the invoice text, no sequence/label header.
+        assert "示例乙酒店" in grouped[0].get_text()
+        assert "a.pdf p1" not in grouped[0].get_text()
+    finally:
+        grouped.close()
+
     for path, before in hashes.items():
         assert digest(path) == before
 
