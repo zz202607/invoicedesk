@@ -1,7 +1,7 @@
 # 发票管家（InvoiceDesk）· PROGRESS
 
 > 最后更新：2026-10-29
-> 当前阶段：**Phase 3d 及补丁（A4 分类 PDF、餐费规则、新单清池）与导出修订（规则版本回填、分类金额命名、总合并、分类汇总大写）已实现**；PR #10 已开、CI 全绿，待实机验收与 _ming 确认合并
+> 当前阶段：**Phase 3d 及补丁（A4 分类 PDF、餐费规则、新单清池）与导出修订（规则版本回填、分类金额命名、总合并、分类汇总大写）已实现**；PR #10 已合并（`b86101c`），待实机验收
 > 分支：`main` · 仓库：[invoicedesk](https://github.com/zz202607/invoicedesk)（public）
 
 ## 现在
@@ -43,8 +43,8 @@
   `open_output_folder` 仅允许 export/report。
 - 打包（3a）：PyInstaller one-dir，冻结态 DB/out/logs 在 `%LOCALAPPDATA%\InvoiceDesk`；滚动日志、
   异常钩子、WebView2 检测、`--smoke` 自检；实测 64.1MB，smoke exit 0。
-- 合并：私有仓库 PR #2–#8（详见 `docs/journal`）；公开仓库 #1–#7：2f、`bcd02c1`、`c6a1bfe`、
-  `8fcd5f4`、`916a679`、`0aac065`、`d35f8c5`（均 CI 全绿，经 _ming 确认）。
+- 合并：私有仓库 PR #2–#8（详见 `docs/journal`）；公开仓库 #1–#7、#10：2f、`bcd02c1`、`c6a1bfe`、
+  `8fcd5f4`、`916a679`、`0aac065`、`d35f8c5`、`b86101c`（均 CI 全绿，经 _ming 确认）。
 - 审查：2b/2c/2d/2e 多轮修复异常路径、回滚、TOCTOU、LIKE 转义、CSP、并发写；本地测试/CI 绿。
 - OCR（3c）：`app/core/ocr.py` 用随包 RapidOCR（ONNX，离线）识别无文本层页；OCR 行喂给
   原几何解析器，票号/日期/双方/金额/项目全部走同一套校验；红章遮住「普通」时按「电子发票 +
