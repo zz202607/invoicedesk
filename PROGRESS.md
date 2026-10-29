@@ -43,9 +43,8 @@
   `open_output_folder` 仅允许 export/report。
 - 打包（3a）：PyInstaller one-dir，冻结态 DB/out/logs 在 `%LOCALAPPDATA%\InvoiceDesk`；滚动日志、
   异常钩子、WebView2 检测、`--smoke` 自检；实测 64.1MB，smoke exit 0。
-- 合并：PR #2 `4f2f9af`；#3 `f44ddd6`；#4 `33f7bcc`；#5 `9108e14`；#6 `8c1ea44`；#7 `565f376`；
-  #8 `07f0fe5`；公开仓库 PR #1（2f）、#2 句柄修复 `bcd02c1`、#3 弹窗 `c6a1bfe`、#4 打包
-  `8fcd5f4`、#5 OCR/体验 `916a679`（均 CI 全绿，经 _ming 确认）。
+- 合并：私有仓库 PR #2–#8（详见 `docs/journal`）；公开仓库 #1–#7：2f、`bcd02c1`、`c6a1bfe`、
+  `8fcd5f4`、`916a679`、`0aac065`、`d35f8c5`（均 CI 全绿，经 _ming 确认）。
 - 审查：2b/2c/2d/2e 多轮修复异常路径、回滚、TOCTOU、LIKE 转义、CSP、并发写；本地测试/CI 绿。
 - OCR（3c）：`app/core/ocr.py` 用随包 RapidOCR（ONNX，离线）识别无文本层页；OCR 行喂给
   原几何解析器，票号/日期/双方/金额/项目全部走同一套校验；红章遮住「普通」时按「电子发票 +
@@ -72,8 +71,9 @@
   新单刷新；测试、ruff 全绿。
 - 交互（3d）：预览 ↑/↓ 切换（输入框内不劫持）、确认后自动下一张、顶部一键证据包；新包
   245.6MB、smoke 全 true；Chrome 无头渲染验证提示条/导出清单/↑/↓。
-- 下一步：开 PR 合并 3d 补丁；真实 10 月批次在 pywebview 实机点按、干净机器双击；按 `ROADMAP`
-  3e 做「本月报账」向导和待确认队列；再做 3b 自动备份/恢复；补 7–9 月黄金集（暂缓）。
+- 下一步：实机验收 3d 补丁（新建单清池、A4 二合一打印）；真实 10 月批次在 pywebview 点按、
+  干净机器双击；按 `ROADMAP` 3e 做「本月报账」向导和待确认队列；再做 3b 自动备份/恢复；
+  补 7–9 月黄金集（暂缓）。
 
 ## 不变量（Guardrails）
 
