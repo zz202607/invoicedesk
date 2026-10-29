@@ -90,6 +90,7 @@ createApp({
       themeMode: 'auto',
       busy: '',
       toast: { message: '', kind: 'info', timer: null },
+      exportResult: null,
     };
   },
 
@@ -143,7 +144,8 @@ createApp({
         this.showRulesModal ||
         this.showImportModal ||
         this.showDashboardModal ||
-        this.showShortcutsModal
+        this.showShortcutsModal ||
+        Boolean(this.exportResult)
       );
     },
     themeLabel() {
@@ -217,7 +219,8 @@ createApp({
 
     onKeydown(event) {
       if (event.key === 'Escape') {
-        if (this.showShortcutsModal) this.showShortcutsModal = false;
+        if (this.exportResult) this.exportResult = null;
+        else if (this.showShortcutsModal) this.showShortcutsModal = false;
         else if (this.showDashboardModal) this.showDashboardModal = false;
         else if (this.showReportModal) this.showReportModal = false;
         else if (this.showMileageModal) this.showMileageModal = false;
@@ -801,12 +804,13 @@ createApp({
         const notes = [];
         if (data.unlinked) notes.push(`${data.unlinked} 行有票但未关联发票`);
         if (data.mismatches) notes.push(`${data.mismatches} 行金额与发票合计不一致`);
-        const suffix = notes.length ? `\n注意：${notes.join('；')}` : '';
-        this.notify(
-          `已导出 ${data.line_count} 行，合计 ¥${data.amount}。\n${data.path}${suffix}`,
-          notes.length ? 'info' : 'success',
-          9000
-        );
+        this.exportResult = {
+          title: '报销单已导出',
+          summary: `共 ${data.line_count} 行，合计 ¥${data.amount}。`,
+          note: notes.length ? `注意：${notes.join('；')}` : '',
+          kind: 'report',
+          items: [{ label: 'Excel 文件', path: data.path }],
+        };
       } catch (error) {
         /* surfaced already */
       } finally {
@@ -818,16 +822,31 @@ createApp({
       this.busy = '正在导出证据包…';
       try {
         const data = await this.call('export_evidence', this.filterPayload());
-        this.notify(
-          `已导出 ${data.count} 张发票（待确认 ${data.review_count}），` +
-            `合计 ¥${data.total}。\nExcel: ${data.excel_path}\nPDF: ${data.pdf_path}`,
-          'success',
-          9000
-        );
+        this.exportResult = {
+          title: '证据包已导出',
+          summary:
+            `共 ${data.count} 张发票（待确认 ${data.review_count}），` +
+            `合计 ¥${data.total}；PDF ${data.pages} 页。`,
+          note: data.notice_only ? '部分票面为通知单，PDF 中已按唯一票面去重。' : '',
+          kind: 'export',
+          items: [
+            { label: 'Excel 明细', path: data.excel_path },
+            { label: '打印 PDF', path: data.pdf_path },
+          ],
+        };
       } catch (error) {
         /* surfaced already */
       } finally {
         this.busy = '';
+      }
+    },
+
+    async openExportFolder() {
+      if (!this.exportResult) return;
+      try {
+        await this.call('open_output_folder', this.exportResult.kind);
+      } catch (error) {
+        /* surfaced already */
       }
     },
 

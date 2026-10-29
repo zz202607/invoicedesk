@@ -492,6 +492,36 @@ def test_export_evidence(api: Api, tmp_path) -> None:
     assert "没有符合条件" in none["error"]
 
 
+def test_open_output_folder(api: Api, monkeypatch) -> None:
+    opened: list[Path] = []
+    monkeypatch.setattr(api_module, "_open_folder", opened.append)
+
+    response = api.open_output_folder()
+    assert response["ok"] is True, response
+    root = api._out_dir.expanduser().resolve()
+    assert Path(response["data"]["path"]) == root / "export"
+    assert opened == [root / "export"]
+
+    report = api.open_output_folder("report")
+    assert report["ok"] is True, report
+    assert opened[-1] == root / "report"
+
+    invalid = api.open_output_folder("../../escape")
+    assert invalid["ok"] is False
+    assert "不合法" in invalid["error"]
+    assert len(opened) == 2
+
+
+def test_open_output_folder_reports_failure(api: Api, monkeypatch) -> None:
+    def fail(path: Path) -> None:
+        raise OSError("no file manager")
+
+    monkeypatch.setattr(api_module, "_open_folder", fail)
+    response = api.open_output_folder("export")
+    assert response["ok"] is False
+    assert response["error"] == "文件或数据库操作失败。"
+
+
 def test_invoice_listing_and_preview(api: Api, tmp_path) -> None:
     invoice_id = _add_invoice(tmp_path)
     listing = api.list_invoices({"unlinked_only": True, "search": "示例"})

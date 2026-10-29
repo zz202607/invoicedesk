@@ -52,6 +52,13 @@ def _money(cents: int | None) -> str:
     return "" if value is None else f"{value:.2f}"
 
 
+def _open_folder(path: Path) -> None:
+    """Open a folder in the OS file manager (the desktop app targets Windows)."""
+    if sys.platform != "win32":
+        raise ReportError("当前系统不支持打开文件夹。")
+    os.startfile(str(path))  # opens our own output directory
+
+
 def _amount_cents(value: Any) -> int:
     text = "" if value is None else str(value).strip()
     if not text:
@@ -860,6 +867,15 @@ class Api:
             "notice_only": print_info.notice_only,
             "pages": print_info.pages,
         }
+
+    @_endpoint
+    def open_output_folder(self, kind: str = "export") -> dict[str, Any]:
+        """Open ``out/<kind>`` so the user can find exported files afterwards."""
+        if kind not in {"export", "report"}:
+            raise ReportError("输出目录不合法。")
+        target = self._output_dir(kind)
+        _open_folder(target)
+        return {"path": str(target)}
 
     # -------------------------------------------------------------- import
 
