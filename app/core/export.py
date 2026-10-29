@@ -182,7 +182,8 @@ def parse_confidence(raw: str) -> dict[str, str]:
 
 def collect_rows(connection: sqlite3.Connection, filters: ExportFilters) -> list[ExportRow]:
     """Return matching invoices in a stable, print-friendly order."""
-    where: list[str] = []
+    # Archived duplicates stay out of every export; keep one copy instead.
+    where: list[str] = ["archived_at = ''"]
     params: list[object] = []
     if filters.batch_id is not None:
         where.append("batch_id = ?")

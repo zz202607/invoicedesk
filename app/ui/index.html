@@ -95,6 +95,10 @@
           <button class="menu-row" :disabled="!!busy" @click="openBackupFromMenu">
             <span>数据备份…</span>
           </button>
+          <button class="menu-row" :disabled="!!busy" @click="openConflictsFromMenu">
+            <span>重复票审查…</span>
+            <span v-if="boot.conflict_group_count" class="badge warn">{{ boot.conflict_group_count }}</span>
+          </button>
           <button class="menu-row" @click="cycleThemeFromMenu">
             <span>外观：{{ themeLabel }}</span><kbd>Ctrl+Shift+D</kbd>
           </button>
@@ -674,6 +678,134 @@
         </table>
         <div class="modal-actions">
           <button class="btn" @click="showBackupModal = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Duplicate / same-number conflict review modal -->
+    <div v-if="showConflictModal" class="modal-backdrop" @click.self="showConflictModal = false">
+      <div class="modal conflict-modal">
+        <h2>重复票 / 同号冲突审查</h2>
+        <p class="muted">
+          同一票号出现多条记录时，在这里保留一张、归档其余。归档不会删除源发票文件，
+          随时可以在下方恢复；已关联报销单的发票不能归档。
+        </p>
+        <div v-if="conflictsLoading" class="empty">正在加载…</div>
+        <template v-else>
+          <div v-if="!conflictGroups.length" class="empty">
+            没有待处理的重复票或同号冲突。
+          </div>
+          <div
+            v-for="group in conflictGroups"
+            :key="group.invoice_number"
+            class="conflict-group"
+          >
+            <div class="conflict-head">
+              <b>票号 {{ group.invoice_number }}</b>
+              <span class="badge warn">{{ group.kind_label }}</span>
+              <span class="muted">{{ group.invoices.length }} 张记录</span>
+            </div>
+            <table class="data-table conflict-table">
+              <thead>
+                <tr>
+                  <th>保留</th>
+                  <th>日期</th>
+                  <th>销售方</th>
+                  <th>购买方</th>
+                  <th class="num">金额</th>
+                  <th>分类</th>
+                  <th>来源</th>
+                  <th>状态</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in group.invoices" :key="row.id">
+                  <td>
+                    <input
+                      type="radio"
+                      :name="'conflict-' + group.invoice_number"
+                      :value="row.id"
+                      v-model="conflictKeep[group.invoice_number]"
+                      :disabled="conflictsBusy"
+                      :title="'保留 #' + row.id"
+                    >
+                  </td>
+                  <td>{{ row.invoice_date || '—' }}</td>
+                  <td>{{ displayText(row.seller_name, 18) }}</td>
+                  <td>{{ displayText(row.buyer_name, 14) }}</td>
+                  <td class="num">{{ row.amount || '缺金额' }}</td>
+                  <td>{{ row.category }}</td>
+                  <td>
+                    <span :title="row.source_name">{{ displayText(row.source_name, 16) }}</span>
+                    <div class="muted tiny">
+                      第 {{ row.page_index + 1 }}/{{ row.page_count || 1 }} 页
+                      · {{ row.batch_label }} · #{{ row.id }}
+                    </div>
+                  </td>
+                  <td>
+                    <span v-if="row.needs_review" class="badge warn">待确认</span>
+                    <span v-if="row.linked" class="badge linked">已关联</span>
+                    <div
+                      v-if="row.warning_text"
+                      class="muted tiny"
+                      :title="row.warning_text"
+                    >{{ displayText(row.warning_text, 24) }}</div>
+                  </td>
+                  <td>
+                    <button class="icon-btn" :disabled="conflictsBusy" @click="openPreview(row)">
+                      票面
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="conflict-actions">
+              <button
+                class="btn primary"
+                :disabled="conflictsBusy"
+                @click="resolveConflict(group)"
+              >保留所选，归档其余</button>
+            </div>
+          </div>
+
+          <div class="conflict-archived">
+            <h3>已归档（{{ conflictArchived.length }}）</h3>
+            <div v-if="!conflictArchived.length" class="muted">
+              还没有归档记录。
+            </div>
+            <table v-else class="data-table">
+              <thead>
+                <tr>
+                  <th>票号</th>
+                  <th>日期</th>
+                  <th>销售方</th>
+                  <th class="num">金额</th>
+                  <th>归档时间</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in conflictArchived" :key="row.id">
+                  <td>{{ row.invoice_number }}</td>
+                  <td>{{ row.invoice_date || '—' }}</td>
+                  <td>{{ displayText(row.seller_name, 20) }}</td>
+                  <td class="num">{{ row.amount || '—' }}</td>
+                  <td>{{ formatTime(row.archived_at) }}</td>
+                  <td class="rule-ops">
+                    <button
+                      class="icon-btn"
+                      :disabled="conflictsBusy"
+                      @click="restoreArchived(row)"
+                    >恢复</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+        <div class="modal-actions">
+          <button class="btn" @click="showConflictModal = false">关闭</button>
         </div>
       </div>
     </div>

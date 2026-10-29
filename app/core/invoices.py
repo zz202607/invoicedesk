@@ -29,6 +29,10 @@ from app.core.importer import CONFLICT_WARNING, INCOMPLETE_WARNING
 from app.core.text import normalize
 
 DUPLICATE_WARNING = "修正后票号与既有发票完全相同,需人工核对是否重复"
+# Warnings that a human resolves by picking one record per invoice number.
+CONFLICT_WARNINGS = (CONFLICT_WARNING, DUPLICATE_WARNING)
+ARCHIVE_FIELD = "archive"
+CONFLICT_FIELD = "conflict"
 # Red-letter invoices are legitimately negative, so only an absurd magnitude
 # (a typo such as one extra group of digits) is rejected. SQLite binds 64-bit
 # integers; this bound stays far below that while catching paste accidents.
@@ -89,6 +93,19 @@ class InvoiceUpdateResult:
     changed: tuple[InvoiceEdit, ...]
     rule: learning.CategoryRule | None
     conflict: bool = False
+
+
+@dataclass(frozen=True)
+class ConflictResolution:
+    kept_id: int
+    archived_ids: tuple[int, ...]
+    cleared_warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RestoreResult:
+    invoice_id: int
+    conflict_warning: str | None
 
 
 def _clean_text(value: str) -> str:
@@ -232,7 +249,8 @@ def _flag_identity_conflict(
         return None
     others = connection.execute(
         "SELECT id, invoice_date, amount_total_cents, seller_name, warnings,"
-        " needs_review FROM invoices WHERE invoice_number = ? AND id <> ?",
+        " needs_review FROM invoices WHERE invoice_number = ? AND id <> ?"
+        " AND archived_at = ''",
         (number, invoice_id),
     ).fetchall()
     if not others:
@@ -478,6 +496,158 @@ def reopen_invoice(
         new_value="待确认",
         edited_at=stamp,
     )
+
+
+def _linked_report_months(
+    connection: sqlite3.Connection, invoice_id: int
+) -> list[str]:
+    return [
+        row["month"] or f"#{row['report_id']}"
+        for row in connection.execute(
+            "SELECT DISTINCT r.id AS report_id, r.month"
+            " FROM report_line_invoices li"
+            " JOIN report_lines l ON l.id = li.line_id"
+            " JOIN reports r ON r.id = l.report_id"
+            " WHERE li.invoice_id = ? ORDER BY r.id",
+            (invoice_id,),
+        )
+    ]
+
+
+def resolve_conflicts(
+    connection: sqlite3.Connection,
+    keep_id: int,
+    archive_ids: list[int] | tuple[int, ...],
+    *,
+    resolved_at: str | None = None,
+) -> ConflictResolution:
+    """Keep one record for an invoice number and archive the duplicates.
+
+    Archiving hides a record from the pool, exports, and future dedup checks
+    without deleting it: source PDFs stay untouched and the record can be
+    restored. Records already attached to a report line are refused so a
+    submitted report never loses a linked invoice.
+    """
+    ids = list(dict.fromkeys(int(value) for value in archive_ids))
+    if not ids:
+        raise InvoiceError("请选择要归档的重复票")
+    if keep_id in ids:
+        raise InvoiceError("保留的发票不能在归档列表中")
+    keep = connection.execute(
+        "SELECT * FROM invoices WHERE id = ?", (keep_id,)
+    ).fetchone()
+    if keep is None:
+        raise InvoiceError(f"发票不存在：#{keep_id}")
+    if keep["archived_at"]:
+        raise InvoiceError("保留的发票已归档，请先从归档中恢复")
+    number = keep["invoice_number"]
+    if not number:
+        raise InvoiceError("这张发票没有票号，无法按票号审查")
+
+    placeholders = ",".join("?" for _ in ids)
+    archived = connection.execute(
+        f"SELECT * FROM invoices WHERE id IN ({placeholders})", tuple(ids)
+    ).fetchall()
+    found = {row["id"] for row in archived}
+    missing = [value for value in ids if value not in found]
+    if missing:
+        shown = "、".join(f"#{value}" for value in missing[:5])
+        raise InvoiceError(f"发票不存在：{shown}")
+    for row in archived:
+        if row["archived_at"]:
+            raise InvoiceError(f"发票 #{row['id']} 已归档")
+        if row["invoice_number"] != number:
+            raise InvoiceError("只能归档票号相同的发票")
+        months = _linked_report_months(connection, row["id"])
+        if months:
+            raise InvoiceError(
+                f"发票 #{row['id']} 已关联报销单（{'、'.join(months)}），"
+                "请先从报销单移除再归档"
+            )
+
+    stamp = resolved_at or db.utc_now()
+    archived_ids: list[int] = []
+    cleared: list[str] = []
+    with connection:
+        for row in archived:
+            warnings = _warnings_list(row["warnings"])
+            remaining = [item for item in warnings if item not in CONFLICT_WARNINGS]
+            connection.execute(
+                "UPDATE invoices SET archived_at = ?, warnings = ? WHERE id = ?",
+                (stamp, json.dumps(remaining, ensure_ascii=False), row["id"]),
+            )
+            _audit_warning(
+                connection,
+                row["id"],
+                ARCHIVE_FIELD,
+                "保留",
+                f"归档（与 #{keep_id} 重复）",
+                stamp,
+            )
+            archived_ids.append(row["id"])
+        keep_warnings = _warnings_list(keep["warnings"])
+        resolved = [item for item in keep_warnings if item in CONFLICT_WARNINGS]
+        if resolved:
+            remaining = [item for item in keep_warnings if item not in CONFLICT_WARNINGS]
+            connection.execute(
+                "UPDATE invoices SET warnings = ? WHERE id = ?",
+                (json.dumps(remaining, ensure_ascii=False), keep_id),
+            )
+            _audit_warning(
+                connection,
+                keep_id,
+                CONFLICT_FIELD,
+                "；".join(resolved),
+                "已解决：保留本张，归档 "
+                + "、".join(f"#{value}" for value in archived_ids),
+                stamp,
+            )
+            cleared = resolved
+    return ConflictResolution(
+        kept_id=keep_id,
+        archived_ids=tuple(archived_ids),
+        cleared_warnings=tuple(cleared),
+    )
+
+
+def restore_invoice(
+    connection: sqlite3.Connection,
+    invoice_id: int,
+    *,
+    restored_at: str | None = None,
+) -> RestoreResult:
+    """Bring an archived record back; re-flag it if the number still collides."""
+    row = connection.execute(
+        "SELECT * FROM invoices WHERE id = ?", (invoice_id,)
+    ).fetchone()
+    if row is None:
+        raise InvoiceError(f"发票不存在：#{invoice_id}")
+    if not row["archived_at"]:
+        raise InvoiceError("这张发票没有归档")
+    stamp = restored_at or db.utc_now()
+    with connection:
+        connection.execute(
+            "UPDATE invoices SET archived_at = '' WHERE id = ?", (invoice_id,)
+        )
+        warning = _flag_identity_conflict(connection, invoice_id, row, {}, stamp)
+        if warning is not None:
+            warnings = _warnings_list(row["warnings"])
+            if warning not in warnings:
+                warnings.append(warning)
+            connection.execute(
+                "UPDATE invoices SET warnings = ?, needs_review = 1 WHERE id = ?",
+                (json.dumps(warnings, ensure_ascii=False), invoice_id),
+            )
+            _audit_warning(connection, invoice_id, "warning", "", warning, stamp)
+        _audit_warning(
+            connection,
+            invoice_id,
+            ARCHIVE_FIELD,
+            "归档",
+            "恢复为有效发票" + (f"；仍有同号冲突：{warning}" if warning else ""),
+            stamp,
+        )
+    return RestoreResult(invoice_id=invoice_id, conflict_warning=warning)
 
 
 def invoice_edits(

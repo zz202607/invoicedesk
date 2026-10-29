@@ -1301,6 +1301,41 @@ input[type="checkbox"] {
   width: min(860px, 100%);
 }
 
+.conflict-modal {
+  width: min(960px, 100%);
+}
+
+.conflict-group {
+  margin-bottom: 18px;
+}
+
+.conflict-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.conflict-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.conflict-archived {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.conflict-archived h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.tiny {
+  font-size: 11px;
+}
+
 .rule-table {
   table-layout: fixed;
 }

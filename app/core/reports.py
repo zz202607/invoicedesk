@@ -417,7 +417,9 @@ def _ensure_invoices_exist(connection: sqlite3.Connection, ids: Sequence[int]) -
     existing = {
         row["id"]
         for row in connection.execute(
-            f"SELECT id FROM invoices WHERE id IN ({placeholders})", tuple(ids)
+            f"SELECT id FROM invoices WHERE id IN ({placeholders})"
+            " AND archived_at = ''",
+            tuple(ids),
         )
     }
     missing = [invoice_id for invoice_id in ids if invoice_id not in existing]
@@ -708,7 +710,8 @@ def from_invoices(
 ) -> FromInvoicesResult:
     """Turn unlinked invoices into report lines (one line per invoice)."""
     _ensure_report(connection, report_id)
-    filters: list[str] = []
+    # Archived duplicates never become report lines.
+    filters: list[str] = ["i.archived_at = ''"]
     params: list[object] = []
     if batch_id is not None:
         filters.append("i.batch_id = ?")

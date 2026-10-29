@@ -56,7 +56,7 @@ def refresh_builtin_categories(connection: sqlite3.Connection) -> int:
         return 0
     rows = connection.execute(
         "SELECT id, seller_name, item_summary, source_path, category,"
-        " category_rule FROM invoices"
+        " category_rule FROM invoices WHERE archived_at = ''"
     ).fetchall()
     stamp = db.utc_now()
     updated = 0

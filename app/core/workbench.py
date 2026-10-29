@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,6 +73,7 @@ class InvoiceRow:
     needs_review: bool
     edit_count: int
     links: tuple[InvoiceLink, ...]
+    archived_at: str = ""
 
     @property
     def is_linked(self) -> bool:
@@ -165,13 +167,34 @@ def list_invoices(
     review_only: bool = False,
     search: str = "",
     invoice_id: int | None = None,
+    invoice_numbers: Sequence[str] | None = None,
+    status: str = "active",
 ) -> list[InvoiceRow]:
-    """Return invoice-pool rows for the workbench, newest first."""
+    """Return invoice-pool rows for the workbench, newest first.
+
+    ``status`` selects active rows (default), archived rows, or both. Archived
+    records are duplicates the user set aside; they keep their audit trail and
+    can be restored, so every default read path must skip them.
+    """
+    if status not in {"active", "archived", "all"}:
+        raise ValueError(f"unknown invoice status: {status}")
     where: list[str] = []
     params: list[object] = []
+    if status == "active":
+        where.append("i.archived_at = ''")
+    elif status == "archived":
+        where.append("i.archived_at <> ''")
     if invoice_id is not None:
         where.append("i.id = ?")
         params.append(invoice_id)
+    if invoice_numbers is not None:
+        numbers = [number for number in invoice_numbers if number]
+        if not numbers:
+            return []
+        where.append(
+            f"i.invoice_number IN ({', '.join('?' for _ in numbers)})"
+        )
+        params.extend(numbers)
     if batch_id is not None:
         where.append("i.batch_id = ?")
         params.append(batch_id)
@@ -212,7 +235,7 @@ def list_invoices(
         " i.page_index, i.page_count, i.invoice_type, i.invoice_number,"
         " i.invoice_date, i.seller_name, i.buyer_name, i.amount_total_cents,"
         " i.item_summary, i.category, i.category_rule, i.confidence, i.warnings,"
-        " i.needs_review,"
+        " i.needs_review, i.archived_at,"
         " (SELECT COUNT(*) FROM invoice_edits e"
         "  WHERE e.invoice_id = i.id"
         "  AND e.field NOT IN ('review', 'warning', 'category_refresh'))"
@@ -258,6 +281,7 @@ def list_invoices(
                 needs_review=bool(row["needs_review"]),
                 edit_count=row["edit_count"],
                 links=tuple(links.get(row["id"], ())),
+                archived_at=row["archived_at"],
             )
         )
     return invoices
@@ -266,8 +290,58 @@ def list_invoices(
 def get_invoice_row(
     connection: sqlite3.Connection, invoice_id: int
 ) -> InvoiceRow | None:
-    rows = list_invoices(connection, invoice_id=invoice_id)
+    """Look up one row for detail views, archived records included."""
+    rows = list_invoices(connection, invoice_id=invoice_id, status="all")
     return rows[0] if rows else None
+
+
+@dataclass(frozen=True)
+class ConflictGroup:
+    """Active invoices that share one non-empty number.
+
+    ``kind`` is ``duplicate`` when two records have the exact same identity
+    (date, total, seller) and ``conflict`` otherwise; both need a human pick.
+    """
+
+    invoice_number: str
+    kind: str
+    rows: tuple[InvoiceRow, ...]
+
+
+def _identity(row: InvoiceRow) -> tuple[str, int | None, str]:
+    return (row.invoice_date, row.amount_total_cents, row.seller_name)
+
+
+def list_conflict_groups(connection: sqlite3.Connection) -> list[ConflictGroup]:
+    """Group active records by invoice number, newest groups first."""
+    numbers = [
+        row["invoice_number"]
+        for row in connection.execute(
+            "SELECT invoice_number, MAX(invoice_date) AS newest"
+            " FROM invoices WHERE invoice_number <> '' AND archived_at = ''"
+            " GROUP BY invoice_number HAVING COUNT(*) > 1"
+            " ORDER BY CASE WHEN MAX(invoice_date) = '' THEN 1 ELSE 0 END,"
+            " newest DESC, invoice_number"
+        )
+    ]
+    if not numbers:
+        return []
+    grouped: dict[str, list[InvoiceRow]] = {}
+    for row in list_invoices(connection, invoice_numbers=numbers):
+        grouped.setdefault(row.invoice_number, []).append(row)
+    groups: list[ConflictGroup] = []
+    for number in numbers:
+        rows = grouped.get(number, [])
+        if len(rows) < 2:  # pragma: no cover - count and rows agree
+            continue
+        identities = [_identity(row) for row in rows]
+        kind = "duplicate" if len(set(identities)) < len(identities) else "conflict"
+        groups.append(
+            ConflictGroup(
+                invoice_number=number, kind=kind, rows=tuple(rows)
+            )
+        )
+    return groups
 
 
 def summarize_invoices(rows: list[InvoiceRow]) -> InvoiceSummary:
