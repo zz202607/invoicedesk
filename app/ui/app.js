@@ -1468,6 +1468,19 @@ createApp({
     /* ---------------------------------------------------------- preview */
 
     async openPreview(row) {
+      if (
+        this.reviewQueue &&
+        !this.reviewQueue.some((item) => item.id === row.id)
+      ) {
+        // The queue drives its own order; jumping to another pool row would
+        // silently end the queue and lose the in-session undo history.
+        this.notify(
+          '正在逐个确认：请先点队列条上的「×」退出，再查看其他发票。',
+          'info',
+          4000
+        );
+        return;
+      }
       if (this.preview && this.previewDirty) {
         if (this.preview.invoice.id === row.id) return;
         if (!window.confirm('当前发票有未保存的修正，确定切换？')) return;
