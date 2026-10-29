@@ -1,7 +1,7 @@
 # 发票管家（InvoiceDesk）· PROGRESS
 
 > 最后更新：2026-10-29
-> 当前阶段：**Phase 3c 本地 OCR 与体验改进已实现（待 PR/验收）**；Phase 3a 打包已合并
+> 当前阶段：**Phase 3c 本地 OCR 与体验改进已合并**；待干净机器双击验收
 > 分支：`main` · 仓库：[invoicedesk](https://github.com/zz202607/invoicedesk)（public）
 
 ## 现在
@@ -53,7 +53,8 @@
   DB 与日志已生成（说明 UI 已调用 bootstrap）。
 - 合并：PR #2 `4f2f9af`；#3 `f44ddd6`；#4 `33f7bcc`；#5 `9108e14`；#6 `8c1ea44`；#7 `565f376`
   （2d，额度红灯）；#8 `07f0fe5`（CI 精简）；公开仓库 PR #1（2f，CI 全绿）；PR #2 句柄修复
-  `bcd02c1`（CI 全绿）；PR #3 导出结果弹窗 `c6a1bfe`（CI 全绿）；PR #4 打包 `8fcd5f4`（CI 全绿）。
+  `bcd02c1`（CI 全绿）；PR #3 导出结果弹窗 `c6a1bfe`（CI 全绿）；PR #4 打包 `8fcd5f4`（CI 全绿）。 PR #5 OCR/体验
+  `916a679`（App/Docs/Tools/review 全绿，2026-10-29，经 _ming 确认）。
 - 审查：2c 六轮 30 条已修；2d/2e 三轮修复回滚/凭证/TOCTOU/文案/迁移顺序；2b 五轮修复异常
   路径擦除/预览边界/LIKE 转义/幂等生成/输出逃逸/ID 校验/CSP/并发写；最终本地测试/CI 绿。
 - OCR（3c）：`app/core/ocr.py` 用随包 RapidOCR（ONNX，离线）识别无文本层页；OCR 行喂给
