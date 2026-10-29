@@ -302,6 +302,7 @@ def _invoice_filters(payload: dict[str, Any]) -> dict[str, Any]:
         "include_review": bool(payload.get("include_review", True)),
         "unlinked_only": bool(payload.get("unlinked_only", False)),
         "unrecognized_only": bool(payload.get("unrecognized_only", False)),
+        "review_only": bool(payload.get("review_only", False)),
         "search": str(payload.get("search") or "").strip(),
     }
 
@@ -622,6 +623,14 @@ class Api:
         identifier = _int_id(invoice_id, "发票编号")
         with contextlib.closing(self._connect()) as connection:
             invoices.confirm_invoice(connection, identifier)
+            return _invoice_state(connection, identifier)
+
+    @_endpoint
+    def reopen_invoice(self, invoice_id: int) -> dict[str, Any]:
+        """Undo a confirmation and put the invoice back into review."""
+        identifier = _int_id(invoice_id, "发票编号")
+        with contextlib.closing(self._connect()) as connection:
+            invoices.reopen_invoice(connection, identifier)
             return _invoice_state(connection, identifier)
 
     @_endpoint

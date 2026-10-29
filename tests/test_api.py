@@ -912,6 +912,34 @@ def test_invoice_confirmation_clears_review_and_audits(api: Api, tmp_path) -> No
     assert "发票不存在" in missing["error"]
 
 
+def test_review_queue_filter_and_reopen(api: Api, tmp_path) -> None:
+    invoice_id = _add_review_invoice(tmp_path)
+    _add_invoice(tmp_path)  # clean record; must stay out of the queue
+
+    queue = api.list_invoices({"review_only": True})
+    assert queue["ok"] is True, queue
+    assert [row["id"] for row in queue["data"]["rows"]] == [invoice_id]
+    assert queue["data"]["summary"]["review_count"] == 1
+
+    assert api.confirm_invoice(invoice_id)["ok"] is True
+    assert api.list_invoices({"review_only": True})["data"]["rows"] == []
+
+    reopened = api.reopen_invoice(invoice_id)
+    assert reopened["ok"] is True, reopened
+    assert reopened["data"]["invoice"]["needs_review"] is True
+    assert reopened["data"]["edits"][0]["field"] == "review"
+    assert reopened["data"]["edits"][0]["old_value"] == "已确认"
+    assert reopened["data"]["edits"][0]["new_value"] == "待确认"
+
+    again = api.reopen_invoice(invoice_id)
+    assert again["ok"] is False
+    assert "已经在待确认队列" in again["error"]
+
+    missing = api.reopen_invoice(999)
+    assert missing["ok"] is False
+    assert "发票不存在" in missing["error"]
+
+
 def test_invoice_correction_validation(api: Api, tmp_path) -> None:
     invoice_id = _add_invoice(tmp_path)
 

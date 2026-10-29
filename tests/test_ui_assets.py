@@ -225,6 +225,32 @@ def test_reparse_action_is_wired_to_the_bridge() -> None:
     assert "unrecognized_only" in script
 
 
+def test_review_queue_and_monthly_wizard_are_wired() -> None:
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    # The queue is a filtered list of review rows walked one at a time.
+    assert "待确认队列" in html
+    assert "逐个确认" in html
+    assert "openReviewQueue" in html
+    assert "openReviewQueue" in script
+    assert "review_only" in script
+    assert "reviewPosition" in script
+    assert "skipReview" in script
+    # Undo is a real state change, not just navigation.
+    assert "撤销确认" in html
+    assert "reopen_invoice" in script
+    # The monthly wizard orchestrates existing endpoints end to end.
+    assert "本月报账" in html
+    assert "openWizard" in script
+    assert "wizardImport" in script
+    assert "wizardStartReview" in script
+    assert "wizardCreateReport" in script
+    assert "wizardExportEvidence" in script
+    assert "resumeWizard" in script
+    # Reviewing from the wizard must return to it when the queue is closed.
+    assert "this.wizardStep = 2" in script
+
+
 def test_one_click_export_and_arrow_navigation_are_wired() -> None:
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "app.js").read_text(encoding="utf-8")

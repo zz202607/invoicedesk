@@ -76,6 +76,34 @@ def test_correction_updates_fields_audit_and_confidence(tmp_path: Path) -> None:
         connection.close()
 
 
+def test_reopen_invoice_undoes_confirmation(tmp_path: Path) -> None:
+    connection = make_db(tmp_path)
+    try:
+        invoice_id = add_invoice(connection, review=True)
+        invoices.confirm_invoice(connection, invoice_id)
+        assert _row(connection, invoice_id)["needs_review"] == 0
+
+        reopened = invoices.reopen_invoice(connection, invoice_id)
+        assert (reopened.field, reopened.old_value, reopened.new_value) == (
+            "review",
+            "已确认",
+            "待确认",
+        )
+        row = _row(connection, invoice_id)
+        assert row["needs_review"] == 1
+        # Confirmation never removed the warnings, so nothing is lost.
+        assert json.loads(row["warnings"]) == ["测试待确认"]
+        audit = [edit for edit in _edits(connection, invoice_id) if edit["field"] == "review"]
+        assert [edit["new_value"] for edit in audit] == ["已确认", "待确认"]
+
+        with pytest.raises(invoices.InvoiceError, match="已经在待确认队列"):
+            invoices.reopen_invoice(connection, invoice_id)
+        with pytest.raises(invoices.InvoiceError, match="发票不存在"):
+            invoices.reopen_invoice(connection, 999)
+    finally:
+        connection.close()
+
+
 def test_noop_and_missing_invoice(tmp_path: Path) -> None:
     connection = make_db(tmp_path)
     try:

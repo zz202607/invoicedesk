@@ -439,6 +439,47 @@ def confirm_invoice(
     )
 
 
+def reopen_invoice(
+    connection: sqlite3.Connection,
+    invoice_id: int,
+    *,
+    reopened_at: str | None = None,
+) -> InvoiceEdit:
+    """Undo an accidental confirmation by putting the record back in review.
+
+    Only the flag flips: confirmation never removed warnings or low-confidence
+    notes, so re-entering review restores exactly what the user had confirmed.
+    """
+    row = connection.execute(
+        "SELECT needs_review FROM invoices WHERE id = ?", (invoice_id,)
+    ).fetchone()
+    if row is None:
+        raise InvoiceError(f"发票不存在：#{invoice_id}")
+    if row["needs_review"]:
+        raise InvoiceError("这张发票已经在待确认队列中")
+    stamp = reopened_at or db.utc_now()
+    with connection:
+        connection.execute(
+            "UPDATE invoices SET needs_review = 1 WHERE id = ?", (invoice_id,)
+        )
+        cursor = connection.execute(
+            "INSERT INTO invoice_edits"
+            " (invoice_id, field, old_value, new_value, edited_at)"
+            " VALUES (?, 'review', '已确认', '待确认', ?)",
+            (invoice_id, stamp),
+        )
+    edit_id = cursor.lastrowid
+    if edit_id is None:  # pragma: no cover - sqlite always returns a row id
+        raise RuntimeError("无法记录复核")
+    return InvoiceEdit(
+        id=edit_id,
+        field="review",
+        old_value="已确认",
+        new_value="待确认",
+        edited_at=stamp,
+    )
+
+
 def invoice_edits(
     connection: sqlite3.Connection, invoice_id: int, *, limit: int = 20
 ) -> list[InvoiceEdit]:

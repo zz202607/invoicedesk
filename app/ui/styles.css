@@ -291,6 +291,21 @@ input[type="checkbox"] {
   border-color: var(--ok);
 }
 
+.btn.action.wizard {
+  background: var(--panel);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.btn.action.wizard:hover:not(:disabled) {
+  background: var(--accent-weak);
+  color: var(--accent-text);
+}
+
+.btn.action.wizard:disabled {
+  color: var(--muted);
+}
+
 .btn.action.export {
   background: var(--accent);
   border-color: var(--accent);
@@ -569,6 +584,22 @@ input[type="checkbox"] {
 
 .summary-bar b {
   color: var(--text);
+}
+
+.summary-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--warn);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.summary-action:hover {
+  text-decoration-style: solid;
 }
 
 /* -------------------------------------------------------------- tables */
@@ -1001,6 +1032,29 @@ input[type="checkbox"] {
   color: var(--muted);
 }
 
+.review-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--warn-bg);
+  font-size: 12px;
+}
+
+.review-bar .review-reason {
+  flex: 1;
+  min-width: 0;
+  color: var(--warn);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-bar .btn {
+  padding: 3px 9px;
+}
+
 .preview-fields {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1274,6 +1328,86 @@ input[type="checkbox"] {
 
 .rule-ops .icon-btn {
   margin-left: 4px;
+}
+
+/* -------------------------------------------------------------- wizard */
+
+.wizard-modal {
+  width: min(780px, 100%);
+}
+
+.wizard-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.wizard-head h2 {
+  margin-bottom: 2px;
+}
+
+.wizard-head p {
+  margin: 0 0 12px;
+}
+
+.wizard-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.wizard-steps li {
+  flex: 1 1 0;
+  min-width: 96px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.wizard-steps li.done {
+  color: var(--text);
+}
+
+.wizard-steps li.current {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.wizard-batch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wizard-cats {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.wizard-export {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0;
 }
 
 .topbar-help {

@@ -64,6 +64,9 @@ def test_list_invoices_filters_and_order(connection) -> None:
         row.id for row in workbench.list_invoices(connection, include_review=False)
     ] == [first]
     assert [
+        row.id for row in workbench.list_invoices(connection, review_only=True)
+    ] == [second]
+    assert [
         row.id
         for row in workbench.list_invoices(
             connection, date_from="2026-07-15", date_to="2026-08-31"
