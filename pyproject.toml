@@ -11,6 +11,7 @@ dependencies = [
     "pywebview>=5,<7",
     "PyMuPDF>=1.28,<1.29",
     "openpyxl>=3.1,<4",
+    "rapidocr-onnxruntime>=1.4,<2",
 ]
 
 [project.optional-dependencies]

@@ -197,7 +197,8 @@ def test_report_cli_builds_and_exports_a_sheet(tmp_path: Path, capsys) -> None:
         "无票",
     ]
     assert money(worksheet["D7"]) == Decimal("225.00")
-    assert worksheet.max_row == 7
+    assert worksheet["A8"].value == "合计"
+    assert worksheet.max_row == 8
 
 
 def test_report_cli_list_show_update_and_remove(tmp_path: Path, capsys) -> None:

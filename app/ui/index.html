@@ -29,17 +29,63 @@
         <span class="version">v{{ boot.version }}</span>
       </div>
       <span class="spacer"></span>
-      <button class="btn" @click="openDashboard" :disabled="!!busy">汇总</button>
+      <div class="quick-actions">
+        <button
+          class="btn action import"
+          @click="openImportModal"
+          :disabled="!!busy"
+          title="导入发票文件夹（Ctrl+I）"
+        >
+          <span class="action-icon">↓</span> 导入发票
+        </button>
+        <div class="export-menu-wrap">
+          <button
+            class="btn action export"
+            @click.stop="toggleExportMenu"
+            :disabled="!!busy"
+            title="导出报销单或证据包（Ctrl+E 导出报销单）"
+          >
+            <span class="action-icon">↑</span> 导出 <span class="caret">▾</span>
+          </button>
+          <div v-if="exportMenuOpen" class="export-menu" @click.stop>
+            <button
+              class="export-item"
+              :disabled="!report || !!busy"
+              @click="exportReportFromMenu"
+            >
+              <b>导出报销单</b>
+              <span>当前报销单 Excel，含分类汇总、合计与大写金额</span>
+            </button>
+            <button class="export-item" :disabled="!!busy" @click="exportEvidenceFromMenu">
+              <b>导出证据包</b>
+              <span>发票明细 Excel + 二合一打印 PDF，按当前筛选</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <button class="btn primary" @click="openReportModal('create')" :disabled="!!busy">新建报销单</button>
       <button class="btn" @click="poolVisible = !poolVisible" :disabled="!report">
         {{ poolVisible ? '专注报销单' : '显示发票池' }}
       </button>
-      <button class="btn" @click="openImportModal" :disabled="!!busy">导入发票</button>
-      <button class="btn" @click="openRulesModal" :disabled="!!busy">分类规则</button>
-      <button class="btn" @click="exportEvidence" :disabled="!!busy">导出证据包</button>
-      <button class="btn primary" @click="openReportModal('create')" :disabled="!!busy">新建报销单</button>
-      <button class="btn" @click="cycleTheme" :title="'外观：' + themeLabel + '（Ctrl+Shift+D 切换）'">
-        外观：{{ themeLabel }}
-      </button>
+      <div class="more-menu-wrap">
+        <button class="btn" @click.stop="toggleMoreMenu" title="更多功能">
+          更多 <span class="caret">▾</span>
+        </button>
+        <div v-if="moreMenuOpen" class="export-menu more-menu" @click.stop>
+          <button class="menu-row" :disabled="!!busy" @click="openDashboardFromMenu">
+            <span>汇总看板</span><kbd>Ctrl+D</kbd>
+          </button>
+          <button class="menu-row" :disabled="!!busy" @click="openRulesFromMenu">
+            <span>分类规则</span>
+          </button>
+          <button class="menu-row" @click="cycleThemeFromMenu">
+            <span>外观：{{ themeLabel }}</span><kbd>Ctrl+Shift+D</kbd>
+          </button>
+          <button class="menu-row" @click="openShortcutsFromMenu">
+            <span>快捷键与帮助</span><kbd>F1</kbd>
+          </button>
+        </div>
+      </div>
       <button class="icon-btn topbar-help" @click="openShortcuts" title="快捷键（F1）">?</button>
     </header>
 
@@ -64,6 +110,12 @@
           <input type="date" v-model="filters.date_from" @change="refreshInvoices(true)" title="开票日期起">
           <input type="date" v-model="filters.date_to" @change="refreshInvoices(true)" title="开票日期止">
           <button class="btn ghost" @click="refreshInvoices(false)" :disabled="invoicesLoading">刷新</button>
+          <button
+            class="btn"
+            @click="reparseUnrecognized"
+            :disabled="invoicesLoading || !!busy"
+            title="对无文本层的图片/扫描发票重新做本地 OCR 识别；不改源文件，跳过已人工修正的记录"
+          >重新识别未识别</button>
         </div>
 
         <div class="summary-bar">
@@ -111,6 +163,11 @@
                 <td><span class="tag">{{ row.category }}</span></td>
                 <td class="status-cell">
                   <span v-if="row.needs_review" class="badge warn">待确认</span>
+                  <span
+                    v-if="row.warning_text && row.warning_text.includes('OCR')"
+                    class="badge soft"
+                    title="票面无文本层，字段由本地 OCR 识别，请核对"
+                  >OCR</span>
                   <span v-if="row.edit_count" class="badge soft" :title="'人工修正 ' + row.edit_count + ' 项'">已修正</span>
                   <span v-if="row.category_rule === 'learned.seller'" class="badge soft" title="分类来自已学习的销售方规则">规则分类</span>
                   <span v-if="row.linked" class="badge linked" :title="row.links.map(l => '#' + l.report_id + ' ' + l.month).join('，')">已关联</span>
@@ -351,13 +408,49 @@
     <div v-if="showReportModal" class="modal-backdrop" @click.self="showReportModal = false">
       <div class="modal">
         <h2>{{ reportModalMode === 'create' ? '新建报销单' : '编辑表头' }}</h2>
+        <p class="muted">公司、部门和报销人会记住以前填过的内容，下次点一下就能带出。</p>
         <div class="form-grid">
-          <label>公司 *<input v-model.trim="reportForm.company" placeholder="如：示例甲"></label>
-          <label>报销人 *<input v-model.trim="reportForm.reporter" placeholder="姓名"></label>
+          <label>公司 *<input v-model.trim="reportForm.company" list="company-options" placeholder="如：示例甲"></label>
+          <label>报销人 *<input v-model.trim="reportForm.reporter" list="reporter-options" placeholder="姓名"></label>
           <label>月份 *<input type="month" v-model="reportForm.month"></label>
-          <label>部门<input v-model.trim="reportForm.department" placeholder="可选"></label>
+          <label>部门<input v-model.trim="reportForm.department" list="department-options" placeholder="可选"></label>
           <label class="wide">标题<input v-model.trim="reportForm.title" placeholder="留空则自动生成"></label>
           <label class="wide">备注<input v-model.trim="reportForm.note" placeholder="可选"></label>
+        </div>
+        <div v-if="hasReportChoices" class="quick-picks">
+          <div v-if="boot.report_choices.company.length" class="quick-row">
+            <span class="quick-label">公司</span>
+            <button
+              v-for="name in boot.report_choices.company.slice(0, 6)"
+              :key="'company-' + name"
+              type="button"
+              class="pick-chip"
+              :class="{ active: reportForm.company === name }"
+              @click="reportForm.company = name"
+            >{{ name }}</button>
+          </div>
+          <div v-if="boot.report_choices.department.length" class="quick-row">
+            <span class="quick-label">部门</span>
+            <button
+              v-for="name in boot.report_choices.department.slice(0, 6)"
+              :key="'department-' + name"
+              type="button"
+              class="pick-chip"
+              :class="{ active: reportForm.department === name }"
+              @click="reportForm.department = name"
+            >{{ name }}</button>
+          </div>
+          <div v-if="boot.report_choices.reporter.length" class="quick-row">
+            <span class="quick-label">报销人</span>
+            <button
+              v-for="name in boot.report_choices.reporter.slice(0, 6)"
+              :key="'reporter-' + name"
+              type="button"
+              class="pick-chip"
+              :class="{ active: reportForm.reporter === name }"
+              @click="reportForm.reporter = name"
+            >{{ name }}</button>
+          </div>
         </div>
         <div class="modal-actions">
           <button class="btn" @click="showReportModal = false">取消</button>
@@ -452,7 +545,8 @@
         <h2>导入发票</h2>
         <p class="muted">
           选择包含 PDF 发票的文件夹。已导入的文件会按内容自动跳过，源文件不会被修改。<br>
-          也可以直接粘贴路径：在资源管理器里选中文件夹，按 Shift + 右键 →「复制为路径」。
+          也可以直接粘贴路径：在资源管理器里选中文件夹，按 Shift + 右键 →「复制为路径」。<br>
+          图片/扫描发票会用本机 OCR 识别，张数多时可能需要几分钟，请耐心等待。
         </p>
         <div class="form-grid">
           <label class="wide">文件夹路径 *
@@ -464,6 +558,20 @@
             </div>
           </label>
           <label class="wide">批次名称<input v-model.trim="importForm.label" placeholder="可选，默认用文件夹名"></label>
+        </div>
+        <div v-if="boot.recent_import_paths.length" class="recent-paths">
+          <div class="recent-title">最近用过的文件夹（点击填入）</div>
+          <button
+            v-for="path in boot.recent_import_paths.slice(0, 6)"
+            :key="path"
+            type="button"
+            class="recent-path"
+            :class="{ active: importForm.path === path }"
+            :title="path"
+            @click="importForm.path = path"
+          >
+            <b>{{ folderName(path) }}</b><span>{{ path }}</span>
+          </button>
         </div>
         <div class="modal-actions">
           <button class="btn" @click="showImportModal = false">取消</button>
@@ -620,6 +728,15 @@
 
     <datalist id="category-options">
       <option v-for="name in boot.categories" :key="name" :value="name"></option>
+    </datalist>
+    <datalist id="company-options">
+      <option v-for="name in boot.report_choices.company" :key="name" :value="name"></option>
+    </datalist>
+    <datalist id="department-options">
+      <option v-for="name in boot.report_choices.department" :key="name" :value="name"></option>
+    </datalist>
+    <datalist id="reporter-options">
+      <option v-for="name in boot.report_choices.reporter" :key="name" :value="name"></option>
     </datalist>
   </template>
 </div>

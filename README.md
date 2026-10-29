@@ -2,9 +2,10 @@
 
 本地离线的发票整理与报销单生成工具。把一叠 PDF 发票拖进来，自动解析、人工核对、一键导出可以直接提交的《费用报销支出明细表》和分类打印 PDF。
 
-> 当前状态：**Phase 3a 打包已可用** — 解析引擎、SQLite 数据层、导入去重、发票级导出、
-> 报销行与报销单 Excel、桌面工作台、字段修正、规则管理、汇总看板与 PyInstaller 单目录包
-> 已实现；首次启动向导与自动备份待做，见 [ROADMAP.md](ROADMAP.md)。
+> 当前状态：**Phase 3a 打包已可用，并加入本地 OCR** — 解析引擎、SQLite 数据层、导入去重、
+> 发票级导出、报销行与报销单 Excel、桌面工作台、字段修正、规则管理、汇总看板、图片发票
+> OCR、常用文件夹/表头记忆与 PyInstaller 单目录包已实现；首次启动向导与自动备份待做，
+> 见 [ROADMAP.md](ROADMAP.md)。
 
 ## 解决什么问题
 
@@ -29,8 +30,9 @@
 
 ## 计划技术栈
 
-Python 3.13 + pywebview（WebView2）+ SQLite + PyMuPDF + openpyxl；前端 Vue 3 本地内置、
-无 Node 构建，离线运行。Tabulator/ECharts 按需在后续阶段引入（ADR-012）。
+Python 3.13 + pywebview（WebView2）+ SQLite + PyMuPDF + openpyxl + RapidOCR（本地 ONNX
+模型）；前端 Vue 3 本地内置、无 Node 构建，离线运行。Tabulator/ECharts 按需在后续阶段
+引入（ADR-012）。OCR 模型随程序打包，不上传任何票面。
 
 ## 开发
 
@@ -50,7 +52,7 @@ python -m venv .venv
 .venv/Scripts/python -m app.cli parse "D:\发票\2026年7月" --json out\parsed.json
 ```
 
-输出逐张票的类型、日期、金额、类别、票号；低置信度/扫描件/多票页面会标“待确认”。支持全电普票/专票、老版增值税电子普票、通行费、铁路客票、出租车/网约车；扫描件暂不做 OCR。
+输出逐张票的类型、日期、金额、类别、票号；低置信度/多票页面会标“待确认”。支持全电普票/专票、老版增值税电子普票、通行费、铁路客票、出租车/网约车；没有文本层的图片/扫描发票会用本地 OCR（RapidOCR）识别，结果明确标“待确认”并保留可编辑字段。已有库里的旧扫描记录可在工作台点“重新识别未识别”补识别，不会覆盖人工修正。
 
 默认只打印汇总；`--verbose` 才显示逐张明细。JSON 默认只含文件名并隐藏买卖双方税号（`--include-tax-ids` 才输出完整值），且拒绝写入仓库内非 `out/`、`data/` 路径。真实发票输出不要提交，也不要把 stdout 重定向到仓库内文件。
 

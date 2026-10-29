@@ -133,3 +133,17 @@
 - **决定**：PyInstaller 用 one-dir（启动快、不必每次解压），UI 作为 datas 放到 `app/ui`，`runtime.resource_path` 兼容 `_MEIPASS`。冻结态默认根目录 `%LOCALAPPDATA%\InvoiceDesk`（`invoicedesk.db`、`out\`、`logs\`）；源码态保持 `data/`、`out/`。`INVOICEDESK_HOME` 覆盖根目录，`INVOICEDESK_DB` / `INVOICEDESK_OUT` 单独覆盖；所有路径仍走 `db.connect` 与 `output_path_reason` 守卫。日志用 RotatingFileHandler（1 MB × 3），冻结态 stdout/stderr 为 None 时重定向到日志；sys/threading excepthook 记录异常并按需弹窗。启动前只读注册表查询 Evergreen WebView2 GUID；缺失则 MessageBoxW 给出下载地址并返回 2，`create_window`/`start` 失败同样弹窗并写日志；不自动联网下载。`--smoke` 用临时库检查 UI 资源、WebView2 与 bootstrap 版本，构建脚本据此判定失败。图标由标准库 `tools/make_icon.py` 绘制多尺寸 ICO，不引入 Pillow。
 - **替代**：one-file（每次启动解压慢、临时目录更大）；数据放安装目录（只读/升级丢数据）；只靠控制台报错（窗口版看不到）；自动下载 WebView2（联网行为未授权）；Pillow 画图标（为一张图增加依赖）。
 - **重新评估**：需要绿色便携版时把 `INVOICEDESK_HOME` 指到 U 盘；改为固定版本 WebView2 分发时补充检测；构建体积/时间影响发布时再评估 UPX 或裁剪依赖。
+
+## ADR-020 图片/扫描发票：随包本地 OCR（RapidOCR + ONNX），识别结果显式待确认
+
+- **背景**：真实 2026-10 批次中有 10 张 PDF 是纯图片（无文本层），现有解析器只能标“扫描件”，用户要求“不管什么原因都要识别”。财务数据不能上云，OCR 必须离线、随程序分发。
+- **决定**：引入 `rapidocr-onnxruntime`（PP-OCRv4 检测/识别/方向模型，约 16 MB 模型 + onnxruntime/cv2），首次使用时懒加载；把页面以 200 DPI 渲染成灰度图 OCR，按 PDF/像素比例把四点框映射回 `TextLine`，直接复用现有几何解析器（票号、日期、买卖方、金额三重校验、项目、分类）。OCR 页追加“票面无可用文本层，已用 OCR 识别，请核对”警告，所有字段置信度最高为 medium，记录进入待确认；源文件仍只读。红章覆盖标题导致缺“普通”时，以“电子发票 + 发票号码”兜底票型；OCR 把买卖方税号行合并成一行时按左右顺序配对，并按“购买方/销售方”标签或列位置决定买卖方，避免行高差互换。旧库记录用 `reparse_unrecognized` 原地重识别：跳过有 `invoice_edits` 的记录与缺源文件，遇到同号只标记冲突、不删除；工作台有“重新识别未识别”入口。PDF 文本层存在但被 CID 字体弄乱（汉字 <8 且页面有图）时也走 OCR。
+- **替代**：Windows.Media.Ocr（依赖系统 OCR 语言包，跨机器不可控）；Tesseract（需外置 exe + 语言数据，分发更麻烦）；云端 OCR（违反数据边界）；只靠二维码（拿不到买卖方/项目）。
+- **重新评估**：低清/拍照发票准确率不足时，升级到更大 PP-OCR 模型或增加图像预处理；one-dir 包体（约 240–275 MB）成为分发障碍时，评估按需下载模型（需联网授权）或 Windows OCR 后备；识别速度（约 5 秒/页）成为瓶颈时再评估并行/更小模型。
+
+## ADR-021 常用文件夹/表头记忆、导出汇总与大写、导入导出入口
+
+- **背景**：每次导入都要重新选文件夹；公司/部门/报销人重复输入；导出表缺少分类小计、总计与大写金额；导入/导出按钮混在次要操作里不便找。
+- **决定**：schema v5 新增 `settings(key,value)`，最近导入文件夹存 JSON 列表（大小写不敏感去重、最多 8 个、仅展示仍存在的目录），`pick_folder` 选中即记、`import_folder` 成功再记；bootstrap 返回该列表，导入弹窗预填并提供一键填入。公司/部门/报销人不另存 settings：`db.report_choices` 从 `reports` 表按使用次数取前 20，前端用 datalist + 常用 chips，新建表单沿用当前/最近一张报销单的值。导出统一加中文大写：`amounts.chinese_upper(_cents)` 按财务规则处理零、角、分、万/亿；报销单明细第 3 行与末行合计写入大写并新增“分类汇总”sheet（行数/金额/占比/合计/大写），证据包明细、分类汇总、导出信息同步加大写。顶部把“导入发票”和“导出（报销单/证据包）”做成彩色主按钮，其余（汇总/规则/外观/帮助）收进“更多”菜单，保留 Ctrl+I/Ctrl+E/F1。
+- **替代**：把 UI 偏好放 localStorage（`private_mode=True` 不跨启动）；每次从最近的导入批次推导（会漏掉未导入/已清空文件夹）；用第三方大写金额库（几十行可测代码，避免新依赖）。
+- **重新评估**：需要跨设备/跨用户同步常用值时改为导出/导入设置文件；报销单模板要求大写写在其他行时按模板调整；顶部空间更紧张时把“新建报销单”也收进菜单。

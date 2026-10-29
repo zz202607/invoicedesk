@@ -13,6 +13,8 @@ createApp({
         mileage_rate: '1.5',
         layouts: [],
         batches: [],
+        report_choices: { company: [], department: [], reporter: [] },
+        recent_import_paths: [],
       },
       loading: true,
       fatal: '',
@@ -91,6 +93,8 @@ createApp({
       busy: '',
       toast: { message: '', kind: 'info', timer: null },
       exportResult: null,
+      exportMenuOpen: false,
+      moreMenuOpen: false,
     };
   },
 
@@ -148,6 +152,14 @@ createApp({
         Boolean(this.exportResult)
       );
     },
+    hasReportChoices() {
+      const choices = this.boot.report_choices || {};
+      return Boolean(
+        (choices.company && choices.company.length) ||
+          (choices.department && choices.department.length) ||
+          (choices.reporter && choices.reporter.length)
+      );
+    },
     themeLabel() {
       const labels = (window.invoiceDeskTheme && window.invoiceDeskTheme.labels) || {
         auto: '自动',
@@ -173,11 +185,13 @@ createApp({
       window.addEventListener('pywebviewready', () => this.load(), { once: true });
     }
     document.addEventListener('keydown', this.onKeydown);
+    document.addEventListener('click', this.closeMenus);
     this.syncTheme();
   },
 
   beforeUnmount() {
     document.removeEventListener('keydown', this.onKeydown);
+    document.removeEventListener('click', this.closeMenus);
   },
 
   methods: {
@@ -219,7 +233,10 @@ createApp({
 
     onKeydown(event) {
       if (event.key === 'Escape') {
-        if (this.exportResult) this.exportResult = null;
+        if (this.exportMenuOpen || this.moreMenuOpen) {
+          this.exportMenuOpen = false;
+          this.moreMenuOpen = false;
+        } else if (this.exportResult) this.exportResult = null;
         else if (this.showShortcutsModal) this.showShortcutsModal = false;
         else if (this.showDashboardModal) this.showDashboardModal = false;
         else if (this.showReportModal) this.showReportModal = false;
@@ -630,8 +647,15 @@ createApp({
     /* ----------------------------------------------------------- import */
 
     openImportModal() {
-      this.importForm = { path: '', label: '' };
+      const recent = this.boot.recent_import_paths || [];
+      this.importForm = { path: recent.length ? recent[0] : '', label: '' };
       this.showImportModal = true;
+    },
+
+    folderName(path) {
+      const text = String(path == null ? '' : path).replace(/[\\/]+$/, '');
+      const parts = text.split(/[\\/]/);
+      return parts[parts.length - 1] || text;
     },
 
     async pickFolder() {
@@ -669,6 +693,24 @@ createApp({
           'success',
           9000
         );
+      } catch (error) {
+        /* surfaced already */
+      } finally {
+        this.busy = '';
+      }
+    },
+
+    async reparseUnrecognized() {
+      this.busy = '正在重新识别图片发票，请稍候…';
+      try {
+        const data = await this.call('reparse_unrecognized');
+        await this.refreshInvoices(false);
+        const parts = [`重新识别成功 ${data.reparsed} 张`];
+        if (data.failed) parts.push(`仍未识别 ${data.failed} 张`);
+        if (data.skipped_edited) parts.push(`跳过已人工修正 ${data.skipped_edited} 张`);
+        if (data.skipped_missing) parts.push(`缺源文件 ${data.skipped_missing} 张`);
+        if (data.conflicts) parts.push(`${data.conflicts} 张与既有票号冲突，已标记待确认`);
+        this.notify(parts.join('；'), data.reparsed ? 'success' : 'info', 9000);
       } catch (error) {
         /* surfaced already */
       } finally {
@@ -790,6 +832,57 @@ createApp({
     },
 
     /* ----------------------------------------------------------- export */
+
+    toggleExportMenu() {
+      this.exportMenuOpen = !this.exportMenuOpen;
+      this.moreMenuOpen = false;
+    },
+
+    toggleMoreMenu() {
+      this.moreMenuOpen = !this.moreMenuOpen;
+      this.exportMenuOpen = false;
+    },
+
+    closeMenus(event) {
+      if (!this.exportMenuOpen && !this.moreMenuOpen) return;
+      const target = event && event.target;
+      if (target && typeof target.closest === 'function') {
+        if (target.closest('.export-menu-wrap') && this.exportMenuOpen) return;
+        if (target.closest('.more-menu-wrap') && this.moreMenuOpen) return;
+      }
+      this.exportMenuOpen = false;
+      this.moreMenuOpen = false;
+    },
+
+    exportReportFromMenu() {
+      this.exportMenuOpen = false;
+      this.exportReport();
+    },
+
+    exportEvidenceFromMenu() {
+      this.exportMenuOpen = false;
+      this.exportEvidence();
+    },
+
+    openDashboardFromMenu() {
+      this.moreMenuOpen = false;
+      this.openDashboard();
+    },
+
+    openRulesFromMenu() {
+      this.moreMenuOpen = false;
+      this.openRulesModal();
+    },
+
+    cycleThemeFromMenu() {
+      this.moreMenuOpen = false;
+      this.cycleTheme();
+    },
+
+    openShortcutsFromMenu() {
+      this.moreMenuOpen = false;
+      this.openShortcuts();
+    },
 
     async exportReport() {
       if (!this.report) return;

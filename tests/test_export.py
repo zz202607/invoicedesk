@@ -342,6 +342,8 @@ def test_workbook_sheets_values_and_no_leaked_paths(tmp_path: Path) -> None:
     assert float(detail["I6"].value) == 1080.0
     assert float(detail["J6"].value) == 70.0
     assert float(detail["K6"].value) == 1200.0
+    assert detail["G7"].value == "价税合计（大写）"
+    assert detail["H7"].value == "壹仟贰佰元整"
     assert detail.auto_filter.ref == "A1:P4"
 
     categories = workbook["分类汇总"]
@@ -352,6 +354,8 @@ def test_workbook_sheets_values_and_no_leaked_paths(tmp_path: Path) -> None:
     assert categories["A3"].value == "办公费用"
     assert float(categories["E3"].value) == 50.0
     assert float(categories["E4"].value) == 1200.0
+    assert categories["A5"].value == "价税合计（大写）"
+    assert categories["B5"].value == "壹仟贰佰元整"
 
     buyers = workbook["公司汇总"]
     assert buyers["A2"].value == "示例甲公司"
@@ -371,6 +375,7 @@ def test_workbook_sheets_values_and_no_leaked_paths(tmp_path: Path) -> None:
     assert meta["发票条数"] == 3
     assert meta["待确认条数"] == 1
     assert float(meta["价税合计"]) == 1200.0
+    assert meta["价税合计（大写）"] == "壹仟贰佰元整"
     assert meta["来源票面数"] == 3
 
     for worksheet in workbook.worksheets:

@@ -226,6 +226,226 @@ input[type="checkbox"] {
   background: var(--danger-bg);
 }
 
+/* -------------------------------------------------- primary quick actions */
+
+.quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 9px;
+  color: #fff;
+}
+
+.btn.action.import {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+.btn.action.export {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.btn.action:hover:not(:disabled) {
+  filter: brightness(1.07);
+  color: #fff;
+}
+
+.btn.action:disabled {
+  color: #fff;
+}
+
+.action-icon {
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.caret {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+.export-menu-wrap,
+.more-menu-wrap {
+  position: relative;
+}
+
+.export-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 310px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  z-index: 80;
+}
+
+.export-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.export-item:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+.export-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.export-item b {
+  font-size: 13px;
+}
+
+.export-item span {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.more-menu {
+  width: 220px;
+}
+
+.menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.menu-row:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+.menu-row:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.menu-row kbd {
+  color: var(--muted);
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  background: var(--panel-2);
+}
+
+.quick-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.quick-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.quick-label {
+  min-width: 44px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pick-chip {
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.pick-chip:hover {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+  color: var(--accent-text);
+}
+
+.pick-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+  color: var(--accent-text);
+}
+
+.recent-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 190px;
+  overflow: auto;
+  margin-top: 12px;
+}
+
+.recent-title {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.recent-path {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 6px 9px;
+  cursor: pointer;
+}
+
+.recent-path b {
+  font-size: 12.5px;
+}
+
+.recent-path span {
+  color: var(--muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.recent-path:hover,
+.recent-path.active {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+}
+
 .icon-btn {
   border: 0;
   background: transparent;
@@ -1199,6 +1419,21 @@ kbd {
 }
 
 /* ---------------------------------------------------------- responsive */
+
+@media (max-width: 1180px) {
+  .topbar {
+    gap: 6px;
+    padding: 0 10px;
+  }
+
+  .btn.action {
+    padding: 7px 12px;
+  }
+
+  .topbar > .btn:not(.action):not(.primary) {
+    padding: 6px 8px;
+  }
+}
 
 @media (max-width: 1080px) {
   html,

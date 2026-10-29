@@ -19,6 +19,7 @@ from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from app.core.amounts import chinese_upper_cents
 from app.core.reports import Report, ReportError, ReportLine
 
 MONEY_FORMAT = "#,##0.00"
@@ -91,6 +92,7 @@ SUBTITLE_FONT = Font(name="微软雅黑", size=11, bold=True)
 HEADER_FONT = Font(name="微软雅黑", size=11, bold=True)
 BODY_FONT = Font(name="微软雅黑", size=10)
 MISMATCH_FONT = Font(name="微软雅黑", size=10, bold=True, color="C00000")
+TOTAL_FONT = Font(name="微软雅黑", size=10, bold=True)
 CENTER = Alignment(horizontal="center", vertical="center")
 LEFT = Alignment(horizontal="left", vertical="center")
 WRAP_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -178,6 +180,22 @@ def _write_title_rows(
     total.number_format = MONEY_FORMAT
     total.font = SUBTITLE_FONT
     total.alignment = LEFT
+    if columns > 2:
+        upper_cell = worksheet.cell(row=3, column=3)
+        _set_literal(
+            upper_cell,
+            f"大写：{chinese_upper_cents(report.amount_cents)}",
+            limit=200,
+        )
+        upper_cell.font = SUBTITLE_FONT
+        upper_cell.alignment = LEFT
+        if merge_columns > 3:
+            worksheet.merge_cells(
+                start_row=3,
+                start_column=3,
+                end_row=3,
+                end_column=merge_columns,
+            )
     worksheet.row_dimensions[3].height = 29
 
     for row in (1, 2, 3):
@@ -195,6 +213,145 @@ def _write_header_row(worksheet: Worksheet, layout: ReportLayout, columns: int) 
     for column in range(1, columns + 1):
         worksheet.cell(row=4, column=column).border = BORDER
     worksheet.row_dimensions[4].height = 27
+
+
+def _write_total_row(
+    worksheet: Worksheet, report: Report, columns: int, excel_row: int
+) -> None:
+    """Grand-total row with the Chinese uppercase amount."""
+    if columns >= 3:
+        worksheet.merge_cells(
+            start_row=excel_row, start_column=1, end_row=excel_row, end_column=3
+        )
+    label = worksheet.cell(row=excel_row, column=1)
+    _set_literal(label, "合计", limit=20)
+    label.font = TOTAL_FONT
+    label.alignment = CENTER
+
+    amount = worksheet.cell(row=excel_row, column=4)
+    amount.value = Decimal(report.amount_cents) / 100
+    amount.number_format = MONEY_FORMAT
+    amount.font = TOTAL_FONT
+    amount.alignment = CENTER
+
+    if columns > 4:
+        upper = worksheet.cell(row=excel_row, column=5)
+        _set_literal(
+            upper,
+            f"大写：{chinese_upper_cents(report.amount_cents)}",
+            limit=200,
+        )
+        upper.font = TOTAL_FONT
+        upper.alignment = LEFT
+        if columns > 5:
+            worksheet.merge_cells(
+                start_row=excel_row,
+                start_column=5,
+                end_row=excel_row,
+                end_column=columns,
+            )
+    for column in range(1, columns + 1):
+        worksheet.cell(row=excel_row, column=column).border = BORDER
+    worksheet.row_dimensions[excel_row].height = 24
+
+
+def _write_category_sheet(
+    worksheet: Worksheet, report: Report, lines: list[ReportLine]
+) -> None:
+    """Per-category subtotals, grand total, and their uppercase amount."""
+    headers = ("费用类别", "行数", "金额", "占比")
+    worksheet.merge_cells("A1:D1")
+    title = worksheet.cell(row=1, column=1)
+    _set_literal(title, f"{report.title} · 分类汇总", limit=200)
+    title.font = TITLE_FONT
+    title.alignment = CENTER
+    worksheet.row_dimensions[1].height = 32
+
+    groups: dict[str, tuple[int, int]] = {}
+    for line in lines:
+        name = line.category or "未分类"
+        count, cents = groups.get(name, (0, 0))
+        groups[name] = (count + 1, cents + line.amount_cents)
+
+    for column, header in enumerate(headers, start=1):
+        cell = worksheet.cell(row=2, column=column)
+        _set_literal(cell, header, limit=100)
+        cell.font = HEADER_FONT
+        cell.alignment = CENTER
+        cell.border = BORDER
+    worksheet.row_dimensions[2].height = 24
+
+    total_cents = report.amount_cents
+    ordered = sorted(groups.items(), key=lambda item: (-item[1][1], item[0]))
+    row = 3
+    for name, (count, cents) in ordered:
+        category = worksheet.cell(row=row, column=1)
+        _set_literal(category, name, limit=100)
+        category.font = BODY_FONT
+        category.alignment = WRAP_LEFT
+        count_cell = worksheet.cell(row=row, column=2)
+        count_cell.value = count
+        count_cell.number_format = "0"
+        count_cell.font = BODY_FONT
+        count_cell.alignment = CENTER
+        amount = worksheet.cell(row=row, column=3)
+        amount.value = Decimal(cents) / 100
+        amount.number_format = MONEY_FORMAT
+        amount.font = BODY_FONT
+        amount.alignment = CENTER
+        share = worksheet.cell(row=row, column=4)
+        share.value = cents / total_cents if total_cents else 0.0
+        share.number_format = "0.0%"
+        share.font = BODY_FONT
+        share.alignment = CENTER
+        for column in range(1, 5):
+            worksheet.cell(row=row, column=column).border = BORDER
+        row += 1
+
+    label = worksheet.cell(row=row, column=1)
+    _set_literal(label, "合计", limit=20)
+    label.font = TOTAL_FONT
+    label.alignment = CENTER
+    count_cell = worksheet.cell(row=row, column=2)
+    count_cell.value = len(lines)
+    count_cell.number_format = "0"
+    count_cell.font = TOTAL_FONT
+    count_cell.alignment = CENTER
+    amount = worksheet.cell(row=row, column=3)
+    amount.value = Decimal(total_cents) / 100
+    amount.number_format = MONEY_FORMAT
+    amount.font = TOTAL_FONT
+    amount.alignment = CENTER
+    share = worksheet.cell(row=row, column=4)
+    share.value = 1.0 if total_cents else 0.0
+    share.number_format = "0.0%"
+    share.font = TOTAL_FONT
+    share.alignment = CENTER
+    for column in range(1, 5):
+        worksheet.cell(row=row, column=column).border = BORDER
+    row += 1
+
+    upper_label = worksheet.cell(row=row, column=1)
+    _set_literal(upper_label, "金额大写", limit=20)
+    upper_label.font = TOTAL_FONT
+    upper_label.alignment = CENTER
+    worksheet.merge_cells(start_row=row, start_column=2, end_row=row, end_column=4)
+    upper = worksheet.cell(row=row, column=2)
+    _set_literal(upper, chinese_upper_cents(total_cents), limit=200)
+    upper.font = TOTAL_FONT
+    upper.alignment = LEFT
+    for column in range(1, 5):
+        worksheet.cell(row=row, column=column).border = BORDER
+    worksheet.row_dimensions[row].height = 24
+
+    for column, width in enumerate((26, 10, 16, 10), start=1):
+        worksheet.column_dimensions[get_column_letter(column)].width = width
+    worksheet.sheet_view.showGridLines = False
+    worksheet.page_setup.orientation = "portrait"
+    worksheet.page_setup.paperSize = Worksheet.PAPERSIZE_A4
+    worksheet.page_setup.fitToWidth = 1
+    worksheet.page_setup.fitToHeight = 0
+    worksheet.sheet_properties.pageSetUpPr.fitToPage = True
 
 
 def _write_line(
@@ -278,6 +435,8 @@ def write_report_workbook(
     _write_header_row(worksheet, layout, columns)
     for index, line in enumerate(lines, start=1):
         _write_line(worksheet, index + 4, index, line, report, layout)
+    _write_total_row(worksheet, report, columns, len(lines) + 5)
+    _write_category_sheet(workbook.create_sheet("分类汇总"), report, lines)
 
     for column, width in enumerate(layout.widths, start=1):
         worksheet.column_dimensions[get_column_letter(column)].width = width

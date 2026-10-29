@@ -83,11 +83,18 @@ def test_project_layout_matches_sheet_structure(connection, tmp_path) -> None:
     assert worksheet["A1"].value == "示例公司7月报销费用支出明细表"
     assert worksheet["A1"].font.size == 16
     assert worksheet["A1"].font.bold
-    assert {str(rng) for rng in worksheet.merged_cells.ranges} == {"A1:H1", "A2:H2"}
+    assert {str(rng) for rng in worksheet.merged_cells.ranges} == {
+        "A1:H1",
+        "A2:H2",
+        "C3:H3",
+        "A8:C8",
+        "E8:H8",
+    }
     assert worksheet["A2"].value.startswith("部门：示例部门")
     assert "报销人：张三" in worksheet["A2"].value
     assert worksheet["A3"].value == "报销金额："
     assert money(worksheet["B3"]) == Decimal("-655.00")
+    assert worksheet["C3"].value == "大写：负陆佰伍拾伍元整"
     assert worksheet["B3"].number_format == "#,##0.00"
 
     headers = [worksheet.cell(row=4, column=column).value for column in range(1, 9)]
@@ -115,10 +122,34 @@ def test_project_layout_matches_sheet_structure(connection, tmp_path) -> None:
     assert money(worksheet["D7"]) == Decimal("225.00")
     assert third[4:] == ["张三", "无票", "示例项目二", "示例行程"]
 
-    assert worksheet.max_row == 7
+    assert worksheet.max_row == 8
+    assert worksheet["A8"].value == "合计"
+    assert money(worksheet["D8"]) == Decimal("-655.00")
+    assert worksheet["E8"].value == "大写：负陆佰伍拾伍元整"
     assert worksheet.column_dimensions["H"].width == 42.0
     assert worksheet.sheet_view.showGridLines is False
     assert worksheet.print_title_rows == "$1:$4"
+
+    summary = workbook["分类汇总"]
+    assert summary["A1"].value == "示例公司7月报销费用支出明细表 · 分类汇总"
+    assert [summary.cell(row=2, column=column).value for column in range(1, 5)] == [
+        "费用类别",
+        "行数",
+        "金额",
+        "占比",
+    ]
+    assert summary["A3"].value == "汽车费用"
+    assert summary["B3"].value == 1
+    assert money(summary["C3"]) == Decimal("225.00")
+    assert abs(float(summary["D3"].value) - 225 / -655) < 1e-9
+    assert summary["A4"].value == "办公费用"
+    assert summary["A5"].value == "转账"
+    assert summary["A6"].value == "合计"
+    assert summary["B6"].value == 3
+    assert money(summary["C6"]) == Decimal("-655.00")
+    assert float(summary["D6"].value) == 1.0
+    assert summary["A7"].value == "金额大写"
+    assert summary["B7"].value == "负陆佰伍拾伍元整"
 
 
 def test_company_layout_puts_description_before_company(connection, tmp_path) -> None:
@@ -143,7 +174,13 @@ def test_company_layout_puts_description_before_company(connection, tmp_path) ->
     assert worksheet["H5"].value == "示例公司"
     assert worksheet["G5"].alignment.wrap_text is True
     assert worksheet["H5"].alignment.wrap_text is None
-    assert {str(rng) for rng in worksheet.merged_cells.ranges} == {"A1:G1", "A2:G2"}
+    assert {str(rng) for rng in worksheet.merged_cells.ranges} == {
+        "A1:G1",
+        "A2:G2",
+        "C3:G3",
+        "A8:C8",
+        "E8:H8",
+    }
 
 
 def test_plain_layout_has_seven_columns(connection, tmp_path) -> None:
@@ -155,7 +192,13 @@ def test_plain_layout_has_seven_columns(connection, tmp_path) -> None:
     assert worksheet.max_column == 7
     assert worksheet.cell(row=4, column=7).value == "备注（报销费用说明）"
     assert worksheet.cell(row=5, column=7).value == "示例费用甲"
-    assert {str(rng) for rng in worksheet.merged_cells.ranges} == {"A1:G1", "A2:G2"}
+    assert {str(rng) for rng in worksheet.merged_cells.ranges} == {
+        "A1:G1",
+        "A2:G2",
+        "C3:G3",
+        "A8:C8",
+        "E8:G8",
+    }
 
 
 def test_project_header_can_be_overridden(connection, tmp_path) -> None:

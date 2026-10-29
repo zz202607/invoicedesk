@@ -103,7 +103,9 @@ def test_packaged_build_ignores_debug_flag(monkeypatch) -> None:
     assert "[调试]" not in fake.window_kwargs["title"]
 
 
-def _gui_fake(monkeypatch, picked):
+def _gui_fake(monkeypatch, picked, tmp_path):
+    # Never write bridge state (recent folders) into the developer's real pool.
+    monkeypatch.setenv("INVOICEDESK_DB", str(tmp_path / "picker.db"))
     # The .NET delegate wrapper only exists inside a real desktop runtime.
     monkeypatch.setattr("app.main._gui_action", lambda callback: callback)
     fake = FakeWebview()
@@ -113,7 +115,7 @@ def _gui_fake(monkeypatch, picked):
 
 
 def test_folder_picker_uses_the_native_dialog_on_the_gui_thread(monkeypatch, tmp_path) -> None:
-    fake, window = _gui_fake(monkeypatch, (str(tmp_path),))
+    fake, window = _gui_fake(monkeypatch, (str(tmp_path),), tmp_path)
     assert main(fake) == 0
 
     api = fake.window_kwargs["js_api"]
@@ -124,7 +126,7 @@ def test_folder_picker_uses_the_native_dialog_on_the_gui_thread(monkeypatch, tmp
 
 
 def test_folder_picker_cancel_and_initial_directory_fallback(monkeypatch, tmp_path) -> None:
-    fake, window = _gui_fake(monkeypatch, None)
+    fake, window = _gui_fake(monkeypatch, None, tmp_path)
     assert main(fake) == 0
 
     api = fake.window_kwargs["js_api"]
