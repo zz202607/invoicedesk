@@ -17,6 +17,7 @@ from tests.report_factory import add_invoice
 @pytest.fixture(autouse=True)
 def _isolated_paths(monkeypatch, tmp_path):
     """main() opens (and snapshots) the database; never the developer's pool."""
+    monkeypatch.setenv("INVOICEDESK_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("INVOICEDESK_DB", str(tmp_path / "invoicedesk.db"))
     monkeypatch.setenv("INVOICEDESK_OUT", str(tmp_path / "out"))
 

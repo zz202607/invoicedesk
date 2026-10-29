@@ -28,10 +28,11 @@ REASON_LABELS = {
     "pre-restore": "恢复前",
 }
 
-# ``<db name>-YYYYmmdd-HHMMSS-<reason>.db``; only files we wrote are listed,
-# pruned, or restorable. Everything else in the folder is left alone.
+# ``<db name>-YYYYmmdd-HHMMSS-<reason>[-<n>].db``; only files we wrote are
+# listed, pruned, or restorable. Anything else in the folder is left alone.
 _NAME_RE = re.compile(
-    r"^(?P<prefix>.+)-(?P<date>\d{8})-(?P<time>\d{6})-(?P<reason>[a-z]+(?:-[a-z]+)*)\.db$"
+    r"^(?P<prefix>.+)-(?P<date>\d{8})-(?P<time>\d{6})-"
+    r"(?P<reason>[a-z]+(?:-[a-z]+)*?)(?:-(?P<seq>\d+))?\.db$"
 )
 
 
@@ -59,7 +60,8 @@ def backup_dir(db_path: str | Path) -> Path:
     return Path(db_path).parent / BACKUP_DIRNAME
 
 
-def _parse_name(name: str, prefix: str) -> tuple[str, datetime] | None:
+def _parse_name(name: str, prefix: str) -> tuple[str, datetime, int] | None:
+    """Reason, local creation time, and same-second sequence of one snapshot."""
     match = _NAME_RE.match(name)
     if match is None or match.group("prefix") != prefix:
         return None
@@ -69,7 +71,8 @@ def _parse_name(name: str, prefix: str) -> tuple[str, datetime] | None:
         )
     except ValueError:
         return None
-    return match.group("reason"), created_at
+    sequence = int(match.group("seq") or 1)
+    return match.group("reason"), created_at, sequence
 
 
 def _info(path: Path, reason: str, created_at: datetime) -> BackupInfo:
@@ -95,13 +98,13 @@ def list_backups(db_path: str | Path) -> list[BackupInfo]:
         parsed = _parse_name(entry.name, path.stem)
         if parsed is None:
             continue
-        reason, created_at = parsed
+        reason, created_at, sequence = parsed
         try:
-            found.append(_info(entry, reason, created_at))
+            found.append((_info(entry, reason, created_at), sequence))
         except OSError:  # vanished between iterdir and stat
             continue
-    found.sort(key=lambda item: (item.created_at, item.name), reverse=True)
-    return found
+    found.sort(key=lambda pair: (pair[0].created_at, pair[1], pair[0].name), reverse=True)
+    return [item for item, _ in found]
 
 
 def latest_backup(db_path: str | Path) -> BackupInfo | None:
@@ -154,8 +157,15 @@ def _write_snapshot(
     created = (now or datetime.now()).replace(microsecond=0)
     target_dir = backup_dir(db_path)
     target_dir.mkdir(parents=True, exist_ok=True)
-    name = f"{db_path.stem}-{created.strftime('%Y%m%d-%H%M%S')}-{reason}.db"
-    target = target_dir / name
+    stem = f"{db_path.stem}-{created.strftime('%Y%m%d-%H%M%S')}-{reason}"
+    # Two snapshots in the same second (double click, restore + manual) get
+    # ``-2``, ``-3``… instead of silently replacing the earlier one.
+    target = target_dir / f"{stem}.db"
+    sequence = 2
+    while target.exists():
+        target = target_dir / f"{stem}-{sequence}.db"
+        sequence += 1
+    name = target.name
     temp = target.with_name(name + ".tmp")
     try:
         temp.unlink()  # a leftover from an interrupted run must not be reused
@@ -295,5 +305,5 @@ def restore_backup(
             side.unlink()
         except OSError:
             pass
-    reason, created_at = parsed
+    reason, created_at, _sequence = parsed
     return RestoreResult(restored=_info(candidate, reason, created_at), snapshot=snapshot)

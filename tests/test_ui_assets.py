@@ -86,6 +86,17 @@ def test_database_backup_is_wired_to_the_bridge() -> None:
         "open_backup_folder",
     ):
         assert bridge in script, bridge
+    # Restoring swaps row ids, so the handler must drop anything that cached them.
+    start = script.index("async restoreBackup(")
+    body = script[start : script.index("\n    },", start)]
+    for reset in (
+        "this.preview = null",
+        "this.selected = []",
+        "this.report = null",
+        "this.lines = []",
+        "this.backupsBusy = false",
+    ):
+        assert reset in body, reset
 
 
 def test_rule_management_is_wired_to_the_bridge() -> None:

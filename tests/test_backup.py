@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+import app.api as api_module
 import app.main as main_module
 from app.api import Api
 from app.core import backup, db
@@ -279,3 +281,246 @@ def test_prepare_database_without_a_backup_leaves_the_file_alone(tmp_path) -> No
 
     assert main_module.prepare_database(path, confirm=lambda *_: True) == "unavailable"
     assert path.read_bytes() == b"not a database"
+
+
+def test_second_snapshot_in_the_same_second_gets_a_sequence_suffix(tmp_path) -> None:
+    path = _populated_db(tmp_path)
+
+    first = backup.create_backup(path, now=STAMP)
+    second = backup.create_backup(path, now=STAMP)
+
+    assert second.name == "invoicedesk-20261029-153012-manual-2.db"
+    assert [item.name for item in backup.list_backups(path)] == [
+        second.name,
+        first.name,
+    ]
+    assert _count(first.path) == 1 and _count(second.path) == 1
+
+
+def test_restore_removes_stale_wal_and_shm_sidecars(tmp_path) -> None:
+    path = _populated_db(tmp_path)
+    snapshot = backup.create_backup(path, now=STAMP)
+    wal = path.with_name(path.name + "-wal")
+    shm = path.with_name(path.name + "-shm")
+    wal.write_bytes(b"stale journal")
+    shm.write_bytes(b"stale shm")
+
+    backup.restore_backup(path, snapshot.name, now=STAMP)
+
+    assert not wal.exists()
+    assert not shm.exists()
+    assert _count(path) == 1
+
+
+def test_restore_rejects_a_snapshot_from_a_newer_program(tmp_path) -> None:
+    path = _populated_db(tmp_path)
+    snapshot = backup.create_backup(path, now=STAMP)
+    connection = sqlite3.connect(str(snapshot.path))
+    try:
+        connection.execute(f"PRAGMA user_version = {db.DB_VERSION + 1}")
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(backup.BackupError):
+        backup.restore_backup(path, snapshot.name)
+
+    assert _count(path) == 1
+
+
+def test_restore_accepts_a_snapshot_of_the_current_version(tmp_path) -> None:
+    path = _populated_db(tmp_path)
+    snapshot = backup.create_backup(path, now=STAMP)
+    connection = sqlite3.connect(str(snapshot.path))
+    try:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == db.DB_VERSION
+    finally:
+        connection.close()
+
+    assert backup.restore_backup(path, snapshot.name).restored.name == snapshot.name
+
+
+def test_restore_leaves_the_live_database_alone_when_the_copy_fails(
+    tmp_path, monkeypatch
+) -> None:
+    path = _populated_db(tmp_path)
+    snapshot = backup.create_backup(path, now=STAMP)
+    before = path.read_bytes()
+
+    def fail(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(backup.shutil, "copyfile", fail)
+    with pytest.raises(backup.BackupError):
+        backup.restore_backup(path, snapshot.name, now=STAMP)
+
+    assert path.read_bytes() == before
+    assert not path.with_name(path.name + ".restore").exists()
+    assert [item.name for item in backup.list_backups(path)] == [snapshot.name]
+
+
+def test_restore_keeps_the_pre_restore_snapshot_when_the_swap_fails(
+    tmp_path, monkeypatch
+) -> None:
+    path = _populated_db(tmp_path)
+    snapshot = backup.create_backup(path, now=STAMP)
+    before = path.read_bytes()
+    real_replace = os.replace
+
+    def locked(source, target, *args, **kwargs):
+        if Path(target) == path:
+            raise OSError("file is in use")
+        return real_replace(source, target, *args, **kwargs)
+
+    monkeypatch.setattr(backup.os, "replace", locked)
+    with pytest.raises(backup.BackupError):
+        backup.restore_backup(path, snapshot.name, now=STAMP)
+
+    assert path.read_bytes() == before
+    assert not path.with_name(path.name + ".restore").exists()
+    assert "pre-restore" in [item.reason for item in backup.list_backups(path)]
+
+
+def test_restore_prunes_the_oldest_snapshot_to_stay_within_keep(tmp_path) -> None:
+    path = _populated_db(tmp_path)
+    for day in range(3):
+        backup.create_backup(path, keep=3, now=STAMP + timedelta(days=day))
+    oldest = backup.list_backups(path)[-1].name
+    newest = backup.list_backups(path)[0]
+
+    result = backup.restore_backup(
+        path, newest.name, keep=3, now=STAMP + timedelta(days=4)
+    )
+
+    names = [item.name for item in backup.list_backups(path)]
+    assert len(names) == 3
+    assert oldest not in names
+    assert result.snapshot is not None
+    assert backup.latest_backup(path).reason == "pre-restore"
+
+
+def test_list_ignores_invalid_dates_and_temporary_files(tmp_path) -> None:
+    path = _populated_db(tmp_path)
+    root = backup.backup_dir(path)
+    root.mkdir(parents=True, exist_ok=True)
+    bad_date = root / "invoicedesk-20261341-000000-manual.db"
+    bad_date.write_bytes(b"x")
+    temp = root / "invoicedesk-20261028-090000-manual.db.tmp"
+    temp.write_bytes(b"junk")
+
+    assert backup.list_backups(path) == []
+    backup.create_backup(path, keep=1, now=STAMP)
+
+    assert bad_date.is_file()
+    assert temp.is_file()
+    assert len(backup.list_backups(path)) == 1
+
+
+def test_create_backup_replaces_a_stale_temp_file(tmp_path) -> None:
+    path = _populated_db(tmp_path)
+    root = backup.backup_dir(path)
+    root.mkdir(parents=True, exist_ok=True)
+    stale = root / "invoicedesk-20261029-153012-manual.db.tmp"
+    stale.write_bytes(b"junk")
+
+    info = backup.create_backup(path, now=STAMP)
+
+    assert not stale.exists()
+    assert _count(info.path) == 1
+
+
+@pytest.mark.parametrize(
+    ("size", "label"),
+    [
+        (0, "0 B"),
+        (1023, "1023 B"),
+        (1024, "1 KB"),
+        (1024 * 1024 - 1, "1024 KB"),
+        (1024 * 1024, "1.0 MB"),
+        (3 * 1024 * 1024 + 512 * 1024, "3.5 MB"),
+    ],
+)
+def test_file_size_labels(size: int, label: str) -> None:
+    assert api_module._file_size(size) == label
+
+
+@pytest.mark.parametrize("error", [backup.BackupError, OSError])
+def test_import_succeeds_when_the_snapshot_fails(tmp_path, monkeypatch, error) -> None:
+    api = Api(db_path=tmp_path / "workbench.db", out_dir=tmp_path / "out")
+    assert api.bootstrap()["ok"] is True
+    folder = tmp_path / "october"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    def fail(*args, **kwargs):
+        raise error("disk full")
+
+    monkeypatch.setattr(backup, "create_backup", fail)
+    response = api.import_folder(str(folder))
+
+    assert response["ok"] is True, response
+    assert response["data"]["files_imported"] == 1
+
+
+def test_reimport_without_new_files_does_not_snapshot(tmp_path) -> None:
+    api = Api(db_path=tmp_path / "workbench.db", out_dir=tmp_path / "out")
+    assert api.bootstrap()["ok"] is True
+    folder = tmp_path / "october"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    assert api.import_folder(str(folder))["ok"] is True
+    second = api.import_folder(str(folder))
+
+    assert second["ok"] is True
+    assert second["data"]["files_imported"] == 0
+    reasons = [item.reason for item in backup.list_backups(tmp_path / "workbench.db")]
+    assert reasons == ["import"]
+
+
+@pytest.mark.parametrize("message", ["database is locked", "database is busy"])
+def test_prepare_database_reports_a_busy_database_without_restoring(
+    tmp_path, monkeypatch, message
+) -> None:
+    path = _populated_db(tmp_path)
+    backup.create_backup(path, now=STAMP)
+    asked: list[tuple[str, str]] = []
+
+    def busy(*args, **kwargs):
+        raise sqlite3.OperationalError(message)
+
+    monkeypatch.setattr(main_module.db, "connect", busy)
+
+    def confirm(title: str, text: str) -> bool:
+        asked.append((title, text))
+        return True
+
+    assert main_module.prepare_database(path, confirm=confirm) == "busy"
+    assert asked == []
+    assert _count(path) == 1
+
+
+def test_prepare_database_offers_a_restore_for_a_newer_database(
+    tmp_path, monkeypatch
+) -> None:
+    path = _populated_db(tmp_path)
+    backup.create_backup(path, now=STAMP)
+
+    def newer(*args, **kwargs):
+        raise db.DatabaseVersionError("database is newer")
+
+    monkeypatch.setattr(main_module.db, "connect", newer)
+
+    assert main_module.prepare_database(path, confirm=lambda *_: True) == "restored"
+
+
+def test_prepare_database_propagates_unsafe_paths(tmp_path, monkeypatch) -> None:
+    path = _populated_db(tmp_path)
+
+    def unsafe(*args, **kwargs):
+        raise db.UnsafeDatabasePathError("inside the repo")
+
+    monkeypatch.setattr(main_module.db, "connect", unsafe)
+
+    with pytest.raises(db.UnsafeDatabasePathError):
+        main_module.prepare_database(path)
