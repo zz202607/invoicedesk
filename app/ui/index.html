@@ -92,6 +92,9 @@
           <button class="menu-row" :disabled="!!busy" @click="openRulesFromMenu">
             <span>分类规则</span>
           </button>
+          <button class="menu-row" :disabled="!!busy" @click="openBackupFromMenu">
+            <span>数据备份…</span>
+          </button>
           <button class="menu-row" @click="cycleThemeFromMenu">
             <span>外观：{{ themeLabel }}</span><kbd>Ctrl+Shift+D</kbd>
           </button>
@@ -618,6 +621,59 @@
         </table>
         <div class="modal-actions">
           <button class="btn" @click="showRulesModal = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Database backup modal -->
+    <div v-if="showBackupModal" class="modal-backdrop" @click.self="showBackupModal = false">
+      <div class="modal backup-modal">
+        <h2>数据备份</h2>
+        <p class="muted">
+          每次启动和导入后自动备份，最多保留 {{ backupMax }} 份，全部留在本机。
+          恢复会用所选备份覆盖当前数据库；覆盖前会先把当前数据库另存为“恢复前”备份，
+          源发票文件不受影响。
+        </p>
+        <div class="backup-toolbar">
+          <button class="btn primary" :disabled="backupsBusy" @click="createBackup">
+            立即备份
+          </button>
+          <button class="btn" :disabled="backupsBusy" @click="openBackupFolder">
+            打开备份文件夹
+          </button>
+          <span class="muted backup-dir" :title="backupDir">{{ backupDir }}</span>
+        </div>
+        <div v-if="backupsLoading" class="empty">正在加载备份…</div>
+        <div v-else-if="!backups.length" class="empty">
+          还没有备份。启动、导入或点“立即备份”后会生成。
+        </div>
+        <table v-else class="data-table backup-table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>来源</th>
+              <th class="num">大小</th>
+              <th class="rule-ops-head"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in backups" :key="item.name">
+              <td>{{ item.created_at }}</td>
+              <td><span class="tag">{{ item.label }}</span></td>
+              <td class="num">{{ item.size }}</td>
+              <td class="rule-ops">
+                <button
+                  class="icon-btn danger-text"
+                  :disabled="backupsBusy"
+                  title="用这个备份覆盖当前数据库"
+                  @click="restoreBackup(item)"
+                >恢复此备份</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="modal-actions">
+          <button class="btn" @click="showBackupModal = false">关闭</button>
         </div>
       </div>
     </div>

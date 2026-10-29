@@ -9,7 +9,16 @@ import pytest
 
 from app import __version__
 from app.api import Api
+from app.core import backup, db
 from app.main import main, run_smoke
+from tests.report_factory import add_invoice
+
+
+@pytest.fixture(autouse=True)
+def _isolated_paths(monkeypatch, tmp_path):
+    """main() opens (and snapshots) the database; never the developer's pool."""
+    monkeypatch.setenv("INVOICEDESK_DB", str(tmp_path / "invoicedesk.db"))
+    monkeypatch.setenv("INVOICEDESK_OUT", str(tmp_path / "out"))
 
 
 class FakeNative:
@@ -70,6 +79,19 @@ def test_main_wires_the_window_without_starting_a_real_gui() -> None:
     assert fake.window_kwargs["maximized"] is True
     assert fake.start_kwargs["private_mode"] is True
     assert fake.start_kwargs["debug"] is False
+
+
+def test_main_snapshots_the_pool_before_the_window_opens(tmp_path) -> None:
+    path = tmp_path / "invoicedesk.db"
+    connection = db.connect(path)
+    try:
+        add_invoice(connection, index=1, number="SMOKE-BK")
+    finally:
+        connection.close()
+
+    assert main(FakeWebview()) == 0
+
+    assert [item.reason for item in backup.list_backups(path)] == ["startup"]
 
 
 def test_debug_flag_parsing(monkeypatch) -> None:

@@ -12,17 +12,20 @@ uses that exit code to verify a frozen bundle.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
+import sqlite3
 import sys
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from app import __version__
 from app.api import Api
-from app.core import logs, runtime
+from app.core import backup, db, logs, runtime
 from app.core.export import redact_paths
 from app.core.reports import ReportError
 
@@ -125,6 +128,75 @@ def make_folder_dialog(webview_module):
     return pick_folder
 
 
+def _ask_yes_no(title: str, message: str) -> bool:
+    """Native Yes/No prompt; ``False`` when the dialog cannot be shown."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+
+        # MB_YESNO | MB_ICONWARNING; IDYES is 6.
+        return ctypes.windll.user32.MessageBoxW(None, message, title, 0x04 | 0x30) == 6
+    except Exception:  # noqa: BLE001 - a prompt that cannot open answers "no"
+        return False
+
+
+def prepare_database(
+    db_path: str | Path,
+    *,
+    confirm: Callable[[str, str], bool] | None = None,
+    keep: int = backup.MAX_BACKUPS,
+) -> str:
+    """Snapshot and verify the database before the window opens.
+
+    Returns ``fresh`` (no database yet), ``ok`` (opened, snapshot taken),
+    ``restored`` (a backup replaced a database that would not open), ``busy``
+    (another instance holds it), or ``unavailable`` (left untouched). A failed
+    snapshot never blocks startup; it is logged and the app continues.
+    """
+    path = Path(db_path)
+    logger = logging.getLogger(logs.LOGGER_NAME)
+    if not path.is_file():
+        return "fresh"
+    try:
+        info = backup.startup_backup(path, keep=keep)
+        if info is not None:
+            logger.info("startup backup: %s", info.name)
+    except (OSError, backup.BackupError) as exc:
+        logger.warning("startup backup skipped: %s", redact_paths(str(exc)))
+    try:
+        with contextlib.closing(db.connect(path)):
+            pass
+    except db.UnsafeDatabasePathError:
+        raise  # a configuration error, not damage; the window reports it
+    except sqlite3.OperationalError as exc:
+        if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+            logger.warning("database busy: %s", redact_paths(str(exc)))
+            return "busy"
+        raise
+    except (sqlite3.Error, db.DatabaseVersionError) as exc:
+        logger.error("database unavailable: %s", redact_paths(str(exc)))
+        latest = backup.latest_backup(path)
+        if latest is None or confirm is None:
+            return "unavailable"
+        message = (
+            f"数据库无法打开：{redact_paths(str(exc))}\n\n"
+            f"最近的备份：{latest.created_at:%Y-%m-%d %H:%M:%S}"
+            f"（{backup.REASON_LABELS.get(latest.reason, latest.reason)}）\n\n"
+            "恢复会用该备份覆盖当前数据库；当前文件会先另存为“恢复前”备份，"
+            "源发票文件不受影响。\n\n是否从最近的备份恢复？"
+        )
+        if not confirm(WINDOW_TITLE, message):
+            return "unavailable"
+        try:
+            backup.restore_backup(path, latest.name, keep=keep)
+        except (OSError, backup.BackupError) as restore_exc:
+            logger.error("restore failed: %s", redact_paths(str(restore_exc)))
+            return "unavailable"
+        return "restored"
+    return "ok"
+
+
 def _smoke_requested() -> bool:
     return "--smoke" in sys.argv[1:] or _env_flag("INVOICEDESK_SMOKE")
 
@@ -221,7 +293,7 @@ def main(webview_module=None, *, message_box=None) -> int:
             )
             return 1
 
-    db_path = os.environ.get("INVOICEDESK_DB") or None
+    db_path = Path(os.environ.get("INVOICEDESK_DB") or runtime.default_db_path())
     out_dir = os.environ.get("INVOICEDESK_OUT") or None
     # DevTools can execute any bridge call, so keep it out of packaged builds
     # and make an accidentally enabled debug session visible in the title.
@@ -229,6 +301,11 @@ def main(webview_module=None, *, message_box=None) -> int:
     title = WINDOW_TITLE + (" [调试]" if debug else "")
 
     try:
+        # Rolling snapshot + integrity check happen before the UI can write;
+        # a database that will not open offers its latest backup instead.
+        logging.getLogger(logs.LOGGER_NAME).info(
+            "database check: %s", prepare_database(db_path, confirm=_ask_yes_no)
+        )
         api = Api(
             db_path=db_path,
             out_dir=out_dir,

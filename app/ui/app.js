@@ -127,6 +127,12 @@ createApp({
       showRulesModal: false,
       rulesLoading: false,
       categoryRules: [],
+      showBackupModal: false,
+      backupsLoading: false,
+      backupsBusy: false,
+      backups: [],
+      backupDir: '',
+      backupMax: 10,
       showDashboardModal: false,
       dashboardLoading: false,
       dashboard: null,
@@ -202,6 +208,7 @@ createApp({
         this.showReportModal ||
         this.showMileageModal ||
         this.showRulesModal ||
+        this.showBackupModal ||
         this.showImportModal ||
         this.showDashboardModal ||
         this.showShortcutsModal ||
@@ -317,6 +324,7 @@ createApp({
         else if (this.showReportModal) this.showReportModal = false;
         else if (this.showMileageModal) this.showMileageModal = false;
         else if (this.showRulesModal) this.showRulesModal = false;
+        else if (this.showBackupModal) this.showBackupModal = false;
         else if (this.showImportModal) this.showImportModal = false;
         else if (this.preview) this.closePreview();
         return;
@@ -1205,6 +1213,79 @@ createApp({
     openRulesFromMenu() {
       this.moreMenuOpen = false;
       this.openRulesModal();
+    },
+
+    openBackupFromMenu() {
+      this.moreMenuOpen = false;
+      this.openBackupModal();
+    },
+
+    openBackupModal() {
+      this.showBackupModal = true;
+      this.loadBackups();
+    },
+
+    async loadBackups() {
+      this.backupsLoading = true;
+      try {
+        const data = await this.call('list_backups');
+        this.backups = data.backups;
+        this.backupDir = data.dir;
+        this.backupMax = data.max;
+      } catch (error) {
+        /* surfaced already */
+      } finally {
+        this.backupsLoading = false;
+      }
+    },
+
+    async createBackup() {
+      this.backupsBusy = true;
+      try {
+        const data = await this.call('create_backup');
+        await this.loadBackups();
+        this.notify(`已创建备份：${data.created_at}`, 'success');
+      } catch (error) {
+        /* surfaced already */
+      } finally {
+        this.backupsBusy = false;
+      }
+    },
+
+    async openBackupFolder() {
+      try {
+        await this.call('open_backup_folder');
+      } catch (error) {
+        /* surfaced already */
+      }
+    },
+
+    async restoreBackup(item) {
+      const confirmed = window.confirm(
+        `恢复备份「${item.created_at} · ${item.label}」？\n\n` +
+          '当前数据库会先另存为“恢复前”备份，然后用所选备份覆盖。\n' +
+          '源发票文件不会被修改或删除。'
+      );
+      if (!confirmed) return;
+      this.backupsBusy = true;
+      this.busy = '正在恢复备份…';
+      try {
+        const data = await this.call('restore_backup', item.name);
+        // Row ids come from the restored file; drop anything that cached them.
+        this.preview = null;
+        this.selected = [];
+        this.currentReportId = '';
+        this.report = null;
+        this.lines = [];
+        await this.load();
+        await this.loadBackups();
+        this.notify(`已恢复 ${data.restored.created_at} 的备份。`, 'success', 6000);
+      } catch (error) {
+        /* surfaced already */
+      } finally {
+        this.busy = '';
+        this.backupsBusy = false;
+      }
     },
 
     cycleThemeFromMenu() {

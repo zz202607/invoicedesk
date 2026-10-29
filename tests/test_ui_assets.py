@@ -72,6 +72,22 @@ def test_pool_shows_company_and_quick_category_editing() -> None:
     assert "this.poolVisible = true" in script
 
 
+def test_database_backup_is_wired_to_the_bridge() -> None:
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    assert "数据备份" in html
+    assert "立即备份" in html
+    assert "恢复此备份" in html
+    assert "showBackupModal" in script
+    for bridge in (
+        "list_backups",
+        "create_backup",
+        "restore_backup",
+        "open_backup_folder",
+    ):
+        assert bridge in script, bridge
+
+
 def test_rule_management_is_wired_to_the_bridge() -> None:
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "app.js").read_text(encoding="utf-8")

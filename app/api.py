@@ -21,7 +21,17 @@ from typing import Any
 from uuid import uuid4
 
 from app import __version__
-from app.core import db, importer, invoices, learning, reparse, reports, runtime, workbench
+from app.core import (
+    backup,
+    db,
+    importer,
+    invoices,
+    learning,
+    reparse,
+    reports,
+    runtime,
+    workbench,
+)
 from app.core.categories import CATEGORIES, DEFAULT_CATEGORY
 from app.core.excel_export import EXCEL_FILENAME, write_workbook
 from app.core.export import (
@@ -51,6 +61,24 @@ def _money(cents: int | None) -> str:
         return ""
     value = db.cents_to_money(cents)
     return "" if value is None else f"{value:.2f}"
+
+
+def _file_size(size: int) -> str:
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.0f} KB"
+    return f"{size} B"
+
+
+def _backup_dict(info: backup.BackupInfo) -> dict[str, Any]:
+    return {
+        "name": info.name,
+        "reason": info.reason,
+        "label": backup.REASON_LABELS.get(info.reason, info.reason),
+        "created_at": info.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "size": _file_size(info.size_bytes),
+    }
 
 
 def _open_folder(path: Path) -> None:
@@ -323,6 +351,7 @@ def _endpoint(method):
             workbench.PreviewError,
             invoices.InvoiceError,
             learning.RuleError,
+            backup.BackupError,
             ExportError,
         ) as exc:
             return {"ok": False, "error": redact_paths(str(exc))}
@@ -966,6 +995,45 @@ class Api:
         _open_folder(target)
         return {"path": str(target)}
 
+    # -------------------------------------------------------------- backup
+
+    @_endpoint
+    def list_backups(self) -> dict[str, Any]:
+        """Snapshots stored beside the database, newest first (local only)."""
+        root = backup.backup_dir(self._db_path)
+        return {
+            "backups": [
+                _backup_dict(item) for item in backup.list_backups(self._db_path)
+            ],
+            "dir": str(root),
+            "max": backup.MAX_BACKUPS,
+        }
+
+    @_endpoint
+    def create_backup(self) -> dict[str, Any]:
+        return _backup_dict(backup.create_backup(self._db_path, reason="manual"))
+
+    @_endpoint
+    def restore_backup(self, name: str) -> dict[str, Any]:
+        """Replace the live database with a snapshot.
+
+        The current file is saved as a ``pre-restore`` snapshot first, so a
+        restore can itself be undone. Source invoice files are never touched.
+        """
+        result = backup.restore_backup(self._db_path, str(name or "").strip())
+        self._preview_cache.clear()
+        return {
+            "restored": _backup_dict(result.restored),
+            "snapshot": _backup_dict(result.snapshot) if result.snapshot else None,
+        }
+
+    @_endpoint
+    def open_backup_folder(self) -> dict[str, Any]:
+        root = backup.backup_dir(self._db_path)
+        root.mkdir(parents=True, exist_ok=True)
+        _open_folder(root)
+        return {"dir": str(root)}
+
     # -------------------------------------------------------------- import
 
     @_endpoint
@@ -1002,6 +1070,16 @@ class Api:
             with connection:
                 remembered = source.parent if source.is_file() else source
                 db.remember_import_path(connection, str(remembered.resolve()))
+        if summary.files_imported:
+            # A snapshot after every import makes a bad batch or a mistaken
+            # confirmation cheap to undo. A failed backup never fails the import.
+            try:
+                backup.create_backup(self._db_path, reason="import")
+            except (OSError, backup.BackupError) as exc:
+                print(
+                    f"[api] import backup skipped: {redact_paths(str(exc))}",
+                    file=sys.stderr,
+                )
         return {
             "batch_id": summary.batch_id,
             "label": summary.label,
