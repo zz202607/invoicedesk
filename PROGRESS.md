@@ -49,7 +49,7 @@
   结果弹窗测试。
 - 合并：PR #2 `4f2f9af`；#3 `f44ddd6`；#4 `33f7bcc`；#5 `9108e14`；#6 `8c1ea44`；#7 `565f376`
   （2d，额度红灯）；#8 `07f0fe5`（CI 精简）；公开仓库 PR #1（2f，CI 全绿）；PR #2 句柄修复
-  `bcd02c1`（CI 全绿）。
+  `bcd02c1`（CI 全绿）；PR #3 导出结果弹窗 `c6a1bfe`（CI 全绿）。
 - 审查：2c 六轮 30 条已修；2d/2e 三轮修复回滚/凭证/TOCTOU/文案/迁移顺序；2b 五轮修复异常
   路径擦除/预览边界/LIKE 转义/幂等生成/输出逃逸/ID 校验/CSP/并发写；最终本地测试/CI 绿。
 - 下一步：复验导出结果弹窗与“打开文件夹”；补 7–9 月黄金集（暂缓，_ming 有空再补）；
@@ -78,6 +78,8 @@
   UI 渲染未测；CSP 仍含 `unsafe-eval` 且页面以 `file://` 加载，加固路线见 `docs/IDEAS.md`。
 - 本机 python_env 的 `_pth` 使 `python -m app` 找不到包，改用 `python run.py`；Python 3.13 venv
   访问 PyPI 会 SSL EOF；本地校验用 `python_env`，CI 使用 GitHub 标准环境。
+- 本地 main 的 PR #3 记录提交未推送：`git push` 两次报 `Recv failure: Connection was reset`，
+  下次会话第一件事先 push，再复验导出结果弹窗。
 
 ## 链接
 
