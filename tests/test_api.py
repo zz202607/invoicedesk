@@ -1428,6 +1428,17 @@ def test_select_data_dir_keeps_a_remembered_export_folder(
     assert appconfig.export_dir() == export.resolve()
 
 
+def test_select_data_dir_never_moves_a_fixed_output(tmp_path, app_config) -> None:
+    fixed = tmp_path / "fixed-out"
+    api = Api(db_path=tmp_path / "workbench.db", out_dir=fixed)
+
+    response = api.select_data_dir(str(tmp_path / "新数据"))
+
+    assert response["ok"] is True, response
+    assert api._out_dir == fixed
+    assert appconfig.export_dir() is None
+
+
 def test_select_data_dir_refuses_when_the_pool_has_data(
     api: Api, tmp_path, app_config
 ) -> None:
@@ -1600,6 +1611,7 @@ def test_first_import_pins_exports_beside_the_invoices(
     planned = api.import_preflight(str(folder))
     assert planned["ok"] is True, planned
     assert planned["data"]["export_dir_preview"] == str(target.resolve())
+    assert planned["data"]["export_dir_note"] is None
 
     started = api.import_start(str(folder))
     assert started["ok"] is True, started
@@ -1632,9 +1644,15 @@ def test_a_later_import_moves_the_export_folder(
     make_pdf(july, full_digital_lines(), name="a.pdf")
     august = tmp_path / "八月"
     august.mkdir()
-    make_pdf(august, full_digital_lines(), name="b.pdf")
+    make_pdf(
+        august,
+        full_digital_lines(number="26502000000000000002"),
+        name="b.pdf",
+    )
 
     for folder in (july, august):
+        planned = api.import_preflight(str(folder))
+        assert planned["data"]["new_files"] == 1
         started = api.import_start(str(folder))
         assert started["ok"] is True, started
         state = _wait_import(api, started["data"]["job_id"])
@@ -1643,6 +1661,14 @@ def test_a_later_import_moves_the_export_folder(
     target = (august / appconfig.EXPORT_SUBDIR).resolve()
     assert appconfig.export_dir() == target
     assert api.bootstrap()["data"]["export_dir"] == str(target)
+
+    # Re-importing the same folder adopts nothing: exports already live there.
+    again = api.import_preflight(str(august))
+    assert again["data"]["new_files"] == 0
+    assert again["data"]["export_dir_preview"] is None
+    again_started = api.import_start(str(august))
+    assert again_started["data"]["adopted_export_dir"] is None
+    _wait_import(api, again_started["data"]["job_id"])
 
 
 def test_export_adoption_ignores_a_pinned_data_dir(
@@ -1667,6 +1693,58 @@ def test_export_adoption_ignores_a_pinned_data_dir(
     assert appconfig.export_dir() == target.resolve()
 
 
+def test_export_dir_note_explains_a_sync_or_remote_source(
+    tmp_path, app_config, monkeypatch
+) -> None:
+    api = _packaged_api(tmp_path, monkeypatch)
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    monkeypatch.setattr(
+        api_module.appconfig, "known_sync_folder", lambda path: "OneDrive"
+    )
+    planned = api.import_preflight(str(folder))
+    assert planned["data"]["export_dir_preview"] is None
+    assert "同步目录" in planned["data"]["export_dir_note"]
+
+    monkeypatch.setattr(api_module.appconfig, "known_sync_folder", lambda path: None)
+    monkeypatch.setattr(
+        api_module, "remote_storage_reason", lambda path: "网络共享路径"
+    )
+
+    def reject(path):
+        raise api_module.appconfig.ConfigError("数据目录位于网络共享路径")
+
+    monkeypatch.setattr(api_module.appconfig, "resolve_data_dir", reject)
+    planned = api.import_preflight(str(folder))
+    assert planned["data"]["export_dir_preview"] is None
+    assert "网络共享" in planned["data"]["export_dir_note"]
+
+
+def test_import_preflight_skips_export_folders(tmp_path, app_config) -> None:
+    api = Api(db_path=tmp_path / "workbench.db", out_dir=tmp_path / "out")
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+    export = folder / appconfig.EXPORT_SUBDIR
+    export.mkdir()
+    make_pdf(
+        export, full_digital_lines(number="26502000000000000009"), name="b.pdf"
+    )
+    nested = folder / "子目录" / appconfig.EXPORT_SUBDIR
+    nested.mkdir(parents=True)
+    make_pdf(
+        nested, full_digital_lines(number="26502000000000000008"), name="c.pdf"
+    )
+
+    planned = api.import_preflight(str(folder))
+
+    assert planned["ok"] is True, planned
+    assert planned["data"]["files_seen"] == 1
+    assert planned["data"]["new_files"] == 1
+
+
 def test_explicit_out_dir_is_never_moved(
     api: Api, tmp_path, app_config, monkeypatch
 ) -> None:
@@ -1684,6 +1762,27 @@ def test_explicit_out_dir_is_never_moved(
     assert api._out_dir == tmp_path / "out"
     assert appconfig.export_dir() is None
     assert not (folder / appconfig.EXPORT_SUBDIR).exists()
+
+
+def test_import_start_stops_when_the_export_folder_cannot_be_pinned(
+    tmp_path, app_config, monkeypatch
+) -> None:
+    api = _packaged_api(tmp_path, monkeypatch)
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    def fail(path):
+        raise OSError("denied")
+
+    monkeypatch.setattr(api_module.appconfig, "ensure_writable_dir", fail)
+    response = api.import_start(str(folder))
+
+    assert response["ok"] is False
+    assert "导出目录" in response["error"]
+    assert appconfig.export_dir() is None
+    assert api._out_dir == tmp_path / "home-out"
+    assert _invoice_count(tmp_path / "workbench.db") == 0
 
 
 def test_import_folder_adopts_the_export_folder(

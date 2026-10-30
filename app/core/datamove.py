@@ -307,14 +307,16 @@ def split_data_dir(
         "copied_export": [],
         "dry_run": dry_run,
     }
+    home_db = home_path / appconfig.DB_FILENAME
+    home_has_db = home_db.is_file()
+    if home_has_db and summarize(home_db) != source_summary:
+        # A dry run must reach the same verdict as the real run, or a user
+        # could delete the legacy folder after a "successful" preview.
+        raise DataMoveError(f"数据目录已有不同的发票库，已停止：{home_db}")
     if dry_run:
         return result
 
-    home_db = home_path / appconfig.DB_FILENAME
-    if home_db.is_file():
-        if summarize(home_db) != source_summary:
-            raise DataMoveError(f"数据目录已有不同的发票库，已停止：{home_db}")
-    else:
+    if not home_has_db:
         _copy_database(source_db, home_db)
         result["copied_database"] = True
         if summarize(home_db) != source_summary:
