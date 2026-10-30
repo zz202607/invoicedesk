@@ -842,10 +842,10 @@
           <p v-if="importPlan.reparse_candidates">
             另有 <b>{{ importPlan.reparse_candidates }}</b> 张旧扫描记录会自动补识别。
           </p>
-          <p v-if="importPlan.data_dir_preview">
-            数据将保存在：<b>{{ importPlan.data_dir_preview }}</b>
+          <p v-if="importPlan.export_dir_preview">
+            导出成果将保存到：<b>{{ importPlan.export_dir_preview }}</b>
           </p>
-          <p v-if="importPlan.data_dir_note" class="muted">{{ importPlan.data_dir_note }}</p>
+          <p v-if="importPlan.export_dir_note" class="muted">{{ importPlan.export_dir_note }}</p>
           <p class="muted">
             导入开始时才写入数据库；过程中可随时取消，取消后本次不会留下任何数据。
             源文件只读，不会被修改。
@@ -923,31 +923,29 @@
         </template>
 
         <template v-else-if="welcomeStep === 2">
-          <h2>数据目录</h2>
+          <h2>数据与导出</h2>
           <p class="muted">
-            默认跟着发票走：第一次导入时，在所选发票文件夹下新建 InvoiceDeskData 子目录，存放发票库、
-            自动备份和导出。也可以现在指定一个固定目录（本机固定盘，不要用 OneDrive、网盘或网络共享）。
+            发票库、自动备份和日志只保存在本机数据目录，默认
+            <code>{{ boot.suggested_data_dir }}</code>。导出的明细、报销单和 PDF 会放在每次导入的
+            发票文件夹下的「报销发票整理」子目录，发票文件夹里不会出现数据库文件。
           </p>
           <div v-if="welcomeForm.data_dir" class="welcome-path">{{ welcomeForm.data_dir }}</div>
-          <p v-else class="muted">尚未指定固定目录；首次导入时自动确定。</p>
+          <p v-else class="muted">当前使用默认位置：{{ boot.suggested_data_dir }}</p>
           <p v-if="welcomeCheck.has_database" class="welcome-found">
             已发现发票库：{{ welcomeCheck.invoice_count }} 张发票、{{ welcomeCheck.batch_count }} 个批次，将直接继续使用。
           </p>
           <p v-else-if="welcomeChecked" class="muted">这个文件夹还没有发票库，将在这里新建。</p>
-          <p class="muted">已有数据后不能在这里更换目录；重装或换电脑时选择原来的文件夹即可继续使用。</p>
+          <p class="muted">
+            也可以指定一个固定目录（本机固定盘，不要用 OneDrive、网盘或网络共享）。
+            已有数据后不能在这里更换；重装或换电脑时选择原来的数据文件夹即可继续使用。
+          </p>
           <div class="modal-actions">
             <button class="btn" :disabled="welcomeBusy" @click="welcomeBack">上一步</button>
             <button class="btn" :disabled="welcomeBusy" @click="welcomePickDir">
               {{ welcomeBusy ? '处理中…' : '浏览…' }}
             </button>
             <button v-if="welcomeForm.data_dir" class="btn primary" :disabled="welcomeBusy" @click="welcomeUseDir">使用此文件夹</button>
-            <button
-              v-if="!boot.data_dir_pinned"
-              class="btn"
-              :class="{ primary: !welcomeForm.data_dir }"
-              :disabled="welcomeBusy"
-              @click="welcomeFollowImport"
-            >跟随发票文件夹</button>
+            <button v-else class="btn primary" :disabled="welcomeBusy" @click="welcomeNext">下一步</button>
           </div>
         </template>
 
@@ -957,9 +955,9 @@
             选择包含 PDF 或图片发票的文件夹。已导入的文件会按内容自动跳过；扫描件和照片会用本机 OCR 识别，约 5 秒一张，不上传。
           </p>
           <div class="welcome-path">
-            数据保存在：{{ boot.data_dir_pinned ? boot.data_dir : '首次导入时自动确定（发票文件夹下的 InvoiceDeskData）' }}
+            发票库：{{ boot.data_dir }}
           </div>
-          <p class="muted">源文件只读；导入开始前会先预检，确认后才会写入数据库，过程中可以取消。</p>
+          <p class="muted">导出成果会放在该发票文件夹下的「报销发票整理」子目录。源文件只读；导入开始前会先预检，确认后才会写入数据库，过程中可以取消。</p>
           <div class="modal-actions">
             <button v-if="welcomeFirstRun" class="btn" :disabled="welcomeBusy" @click="welcomeFinish(false)">稍后自己导入</button>
             <button v-else class="btn" :disabled="welcomeBusy" @click="closeWelcome">关闭</button>
@@ -1330,6 +1328,7 @@
         <table class="about-table">
           <tbody>
             <tr><th>数据目录</th><td class="mono wrap">{{ boot.data_dir }}</td></tr>
+            <tr><th>导出目录</th><td class="mono wrap">{{ boot.export_dir }}</td></tr>
             <tr>
               <th>数据库</th>
               <td class="mono">{{ boot.db_name }}（schema v{{ boot.database_version }}）</td>
@@ -1338,7 +1337,7 @@
             <tr><th>许可证</th><td>MIT</td></tr>
           </tbody>
         </table>
-        <p class="muted">源发票只读。数据库、备份与导出都在数据目录里；「更多 → 数据备份…」可随时快照或恢复。</p>
+        <p class="muted">源发票只读。发票库与备份在数据目录，导出成果在导出目录；「更多 → 数据备份…」可随时快照或恢复。</p>
         <div class="modal-actions">
           <button class="btn primary" @click="showAboutModal = false">关闭</button>
         </div>

@@ -30,6 +30,8 @@ def test_scan_pdfs_skips_output_dirs_and_accepts_uppercase(tmp_path: Path) -> No
     blank_pdf(tmp_path / "out" / "d.pdf")
     (tmp_path / "InvoiceDeskData" / "backups").mkdir(parents=True)
     blank_pdf(tmp_path / "InvoiceDeskData" / "backups" / "e.pdf")
+    (tmp_path / "报销发票整理").mkdir()
+    blank_pdf(tmp_path / "报销发票整理" / "f.pdf")
     (tmp_path / "note.txt").write_text("not a pdf", encoding="utf-8")
 
     names = [path.name for path in scan_pdfs(tmp_path)]

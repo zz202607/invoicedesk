@@ -43,7 +43,7 @@
 
 ## 核心原则
 
-- 源发票只读：首次导入后在发票文件夹下自建 `InvoiceDeskData\` 存放库/备份/导出，不修改源 PDF，也不写其他位置。
+- 源发票只读：发票文件夹旁只新建 `报销发票整理\` 存放导出成果；发票库、备份与日志保存在本机数据目录，不修改源 PDF，也不写其他位置。
 - 财务数据只在本机；不上传云端，不进仓库、不进 CI。
 - 低置信度必须显式标出，每个字段可人工修正。
 - 没有测试/CI 证据不算完成。
@@ -173,11 +173,13 @@ python tools/build_app.py
 构建返回非零。`--skip-build` / `--skip-smoke` 可复用现有产物或只构建。
 
 打包版要求 Windows 装有 **Microsoft Edge WebView2 Runtime**；缺失时程序弹窗给出下载地址并退出，
-不会静默失败。数据默认跟着发票走：首次导入时，在所选发票文件夹下新建 `InvoiceDeskData\`，存放
-`invoicedesk.db`、`backups\`、`out\` 导出目录和 `logs\invoicedesk.log`（滚动 1 MB × 3 份）；
-也可在首次向导里指定一个固定目录。已有库可用 `tools/migrate_data_dir.py` 复制、校验并切换
-（不会删除旧库）。可用 `INVOICEDESK_HOME` 改整个根目录，`INVOICEDESK_DB` / `INVOICEDESK_OUT`
-单独覆盖数据库与导出目录。源码运行时仍使用仓库内 `data/` 与 `out/`。
+不会静默失败。发票库、自动备份与日志默认保存在 `%LOCALAPPDATA%\InvoiceDesk\`（`invoicedesk.db`、
+`backups\`、`logs\invoicedesk.log`，滚动 1 MB × 3 份），也可在首次向导里指定固定目录；导出的明细、
+报销单和 PDF 放在每次导入的发票文件夹下的 `报销发票整理\`，生成文件直接放在该文件夹里
+（不再套 `export\` 子层），只写生成文件，不写数据库。旧版
+`InvoiceDeskData\` 布局可用 `tools/split_data_dir.py` 迁移（校验后复制，不删旧目录）。
+可用 `INVOICEDESK_HOME` 改数据根目录，`INVOICEDESK_DB` / `INVOICEDESK_OUT` 单独覆盖数据库与导出目录。
+源码运行时仍使用仓库内 `data/` 与 `out/`。
 
 每次启动和每次有新增文件的导入后，数据库会自动快照到数据库旁的 `backups\`（最多保留 10 份，
 只在本机）。「更多 → 数据备份…」里可以立即备份、打开备份目录或恢复某个快照；恢复前会先把当前

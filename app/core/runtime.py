@@ -7,8 +7,10 @@ read-only for normal users and every update replaces it. Packaged builds use
 survives reinstalls. ``INVOICEDESK_HOME`` overrides the root in either mode.
 
 The first-run wizard can pin a different data folder in
-:mod:`app.core.appconfig`; when it does, the database, exports, and logs follow
-that folder. Environment variables still win over the wizard.
+:mod:`app.core.appconfig`; when it does, the database, backups, and logs follow
+that folder. Exports are resolved separately: a remembered ``export_dir`` wins,
+then the data folder's ``out/`` (legacy builds kept it there), then the app
+home. Environment variables still win over both.
 
 Choosing a default does not weaken the guards in :mod:`app.core.paths`: the
 database and export writers still refuse remote, synced, and unsafe repo paths.
@@ -88,6 +90,13 @@ def configured_data_dir() -> Path | None:
     return appconfig.data_dir()
 
 
+def configured_export_dir() -> Path | None:
+    """Export folder remembered for the latest import, when one was adopted."""
+    from app.core import appconfig
+
+    return appconfig.export_dir()
+
+
 def suggested_data_dir() -> Path:
     """Folder the wizard offers first; never remote and never the repo root."""
     if uses_app_home():
@@ -105,8 +114,13 @@ def default_db_path() -> Path:
 
 
 def default_out_dir() -> Path:
+    export_dir = configured_export_dir()
+    if export_dir is not None:
+        return export_dir
     data_dir = configured_data_dir()
     if data_dir is not None:
+        # Legacy layouts kept exports inside the data folder; keep reading
+        # that location until the next import pins a folder beside invoices.
         return data_dir / "out"
     if uses_app_home():
         return app_home() / "out"

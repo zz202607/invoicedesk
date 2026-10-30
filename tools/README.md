@@ -27,15 +27,30 @@ python tools/build_app.py --skip-smoke
 python tools/build_app.py --skip-build   # re-smoke the existing dist/
 ```
 
-## migrate_data_dir.py
+## split_data_dir.py
 
-Copies a packaged app home (database, backups, exports, logs) to a new data
-folder, verifies the copied database, and rewrites `config.json` so the next
-start uses it. Close the app first; the old copy is left in place.
+Empties a legacy `InvoiceDeskData` folder beside the invoices. The pool
+(copied through SQLite's backup API and verified), backups, and logs move to
+`%LOCALAPPDATA%\InvoiceDesk`; the old `out` exports are copied directly into
+`报销发票整理` beside the invoices; `config.json` is repointed. Close the app
+first. The old folder is never deleted — check the new layout, then remove it
+yourself.
 
 ```bash
-python tools/migrate_data_dir.py --dry-run --target "E:\\账\\2026年10月\\发票\\InvoiceDeskData"
-python tools/migrate_data_dir.py --target "E:\\账\\2026年10月\\发票\\InvoiceDeskData"
+python tools/split_data_dir.py --dry-run --source "E:\\账\\2026年10月\\发票\\InvoiceDeskData"
+python tools/split_data_dir.py --source "E:\\账\\2026年10月\\发票\\InvoiceDeskData"
+```
+
+## migrate_data_dir.py
+
+Legacy helper for moving a whole data folder (database, backups, logs) to
+another fixed location and rewriting `config.json`. Newer layouts keep exports
+outside the data folder, so `split_data_dir.py` is the usual path when coming
+from `InvoiceDeskData`. Close the app first; the old copy is left in place.
+
+```bash
+python tools/migrate_data_dir.py --dry-run --target "D:\\发票数据"
+python tools/migrate_data_dir.py --target "D:\\发票数据"
 ```
 
 ## make_version.py
