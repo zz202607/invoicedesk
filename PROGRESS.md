@@ -72,7 +72,9 @@
   「更多 → 关于发票管家…」显示版本/运行方式/数据目录/数据库 schema（bootstrap 增 `database_version`/`frozen`）。
 - README 截图（10-30）：`docs/images/` 四张合成数据界面图（工作台、票面预览与修正、汇总看板、重复票审查）；
   README 状态升级 v1.0.0 并说明版本来源；截图脚本在 `build/`（不入库），用真实 WebView2 驱动。
-- 下一步：v1.0.0 已发布（PR #18，tag `v1.0.0`）；按 `ROADMAP.md` 选定下一模块；黄金集暂缓。
+- 下一步：重打包 `dist`（当前 245.7MB 构建早于最后两处修复：`datamove` 干跑冲突预检、
+  `import_folder` 尽力采纳），再用新包做一次导入/导出实机验收；之后开「分类建议」模块（ROADMAP P1）；
+  黄金集暂缓。
 
 ## 不变量（Guardrails）
 
