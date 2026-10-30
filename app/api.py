@@ -484,6 +484,9 @@ class Api:
                 for path in db.recent_import_paths(connection)
                 if Path(path).is_dir()
             ]
+            schema_version = int(
+                connection.execute("PRAGMA user_version").fetchone()[0]
+            )
             # Databases created before the settings table still know where
             # their batches came from; use those as a one-time fallback.
             seen = {path.casefold().rstrip("\\/") for path in recent_paths}
@@ -503,6 +506,8 @@ class Api:
             "today": today.isoformat(),
             "default_month": today.strftime("%Y-%m"),
             "db_name": self._db_path.name,
+            "database_version": schema_version,
+            "frozen": runtime.is_frozen(),
             "data_dir": str(Path(self._db_path).resolve().parent),
             "data_dir_pinned": appconfig.data_dir() is not None,
             "suggested_data_dir": str(runtime.suggested_data_dir()),

@@ -108,6 +108,10 @@
           <button class="menu-row" @click="openShortcutsFromMenu">
             <span>快捷键与帮助</span><kbd>F1</kbd>
           </button>
+          <button class="menu-row" @click="openAboutFromMenu">
+            <span>关于发票管家…</span>
+            <span class="menu-meta">v{{ boot.version }}</span>
+          </button>
         </div>
       </div>
       <button class="icon-btn topbar-help" @click="openShortcuts" title="快捷键（F1）">?</button>
@@ -1308,6 +1312,35 @@
         <p class="muted">外观只影响本机界面，不写入发票数据；自动模式跟随系统设置。</p>
         <div class="modal-actions">
           <button class="btn primary" @click="showShortcutsModal = false">知道了</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- About -->
+    <div v-if="showAboutModal" class="modal-backdrop" @click.self="showAboutModal = false">
+      <div class="modal about-modal">
+        <h2>关于发票管家</h2>
+        <div class="about-brand">
+          <span class="logo">票</span>
+          <div>
+            <div class="about-name">发票管家 InvoiceDesk</div>
+            <div class="muted">v{{ boot.version }} · {{ boot.frozen ? '打包版' : '源码运行' }}</div>
+          </div>
+        </div>
+        <table class="about-table">
+          <tbody>
+            <tr><th>数据目录</th><td class="mono wrap">{{ boot.data_dir }}</td></tr>
+            <tr>
+              <th>数据库</th>
+              <td class="mono">{{ boot.db_name }}（schema v{{ boot.database_version }}）</td>
+            </tr>
+            <tr><th>数据边界</th><td>只在本机运行，不上传云端</td></tr>
+            <tr><th>许可证</th><td>MIT</td></tr>
+          </tbody>
+        </table>
+        <p class="muted">源发票只读。数据库、备份与导出都在数据目录里；「更多 → 数据备份…」可随时快照或恢复。</p>
+        <div class="modal-actions">
+          <button class="btn primary" @click="showAboutModal = false">关闭</button>
         </div>
       </div>
     </div>

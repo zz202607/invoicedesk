@@ -6,7 +6,10 @@ import shutil
 import struct
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
+
+from app import __version__
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / "InvoiceDesk.spec"
@@ -20,6 +23,13 @@ def test_build_requirements_pin_pyinstaller() -> None:
     assert "<7" in text
 
 
+def test_package_version_matches_pyproject() -> None:
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        version = tomllib.load(handle)["project"]["version"]
+    assert version == __version__
+    assert __version__.split(".")[0] == "1", "v1.0 release line"
+
+
 def test_spec_bundles_ui_assets_and_builds_a_windowed_exe() -> None:
     text = SPEC.read_text(encoding="utf-8")
     assert '"app/ui"' in text or "'app/ui'" in text
@@ -27,7 +37,34 @@ def test_spec_bundles_ui_assets_and_builds_a_windowed_exe() -> None:
     assert "webview.platforms.winforms" in text
     assert "webview.platforms.edgechromium" in text
     assert "clr" in text
+    assert "version_info.txt" in text
+    assert "version=str(VERSION_FILE)" in text
     compile(text, str(SPEC), "exec")
+
+
+def test_version_resource_generator_embeds_the_release_version(tmp_path) -> None:
+    target = tmp_path / "version_info.txt"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools" / "make_version.py"),
+            "--out",
+            str(target),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    text = target.read_text(encoding="utf-8")
+    numbers = [int(part) for part in __version__.split(".")]
+    pair = tuple(numbers + [0] * (4 - len(numbers)))
+    assert f"filevers=({pair[0]}, {pair[1]}, {pair[2]}, {pair[3]})" in text
+    assert f"StringStruct('FileVersion', '{__version__}')" in text
+    assert f"StringStruct('ProductVersion', '{__version__}')" in text
+    assert "StringStruct('OriginalFilename', 'InvoiceDesk.exe')" in text
+    compile(text, str(target), "exec")
 
 
 def test_build_artifacts_are_ignored() -> None:

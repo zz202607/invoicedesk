@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 import app.api as api_module
+from app import __version__
 from app.api import Api, _batch_id, _int_id
 from app.core import appconfig, db
 from app.core.models import InvoiceType
@@ -101,6 +102,15 @@ def test_bootstrap_envelope(api: Api) -> None:
         "reporter": [],
     }
     assert "db_path" not in data
+
+
+def test_bootstrap_reports_about_information(api: Api) -> None:
+    """The About dialog shows the release, schema, and how the app is running."""
+    data = api.bootstrap()["data"]
+    assert data["version"] == __version__
+    assert data["database_version"] == db.DB_VERSION
+    assert data["frozen"] is False
+    assert data["data_dir"] == str(api._db_path.resolve().parent)
 
 
 def test_bootstrap_counts_unrecognized_invoices(api: Api, tmp_path: Path) -> None:

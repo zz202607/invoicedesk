@@ -27,6 +27,7 @@ if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
 from make_icon import write_icon  # noqa: E402 - script directory bootstrap
+from make_version import write_version_file  # noqa: E402 - script directory bootstrap
 
 DIST = ROOT / "dist" / "InvoiceDesk"
 EXE = DIST / "InvoiceDesk.exe"
@@ -90,6 +91,8 @@ def main() -> int:
     if not args.skip_build:
         icon = write_icon(ROOT / "build" / "icon.ico")
         print(f"icon: {icon} ({icon.stat().st_size} bytes)")
+        version_file = write_version_file()
+        print(f"version resource: {version_file}")
         started = time.monotonic()
         completed = subprocess.run(
             [

@@ -42,6 +42,18 @@ def test_page_has_restrictive_csp_and_no_remote_assets() -> None:
         assert "https://" not in text
 
 
+def test_about_dialog_shows_version_and_data_location() -> None:
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    assert "关于发票管家" in html
+    assert "boot.database_version" in html
+    assert "boot.frozen" in html
+    assert "boot.data_dir" in html
+    assert "showAboutModal" in html
+    assert "openAboutFromMenu" in script
+    assert "showAboutModal: false" in script
+
+
 def test_invoice_corrections_are_wired_and_auditable() -> None:
     html = (UI / "index.html").read_text(encoding="utf-8")
     script = (UI / "app.js").read_text(encoding="utf-8")

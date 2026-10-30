@@ -1704,6 +1704,57 @@ input[type="checkbox"] {
   color: var(--muted);
 }
 
+/* ------------------------------------------------------------- about */
+
+.about-modal {
+  width: min(560px, 100%);
+}
+
+.about-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 16px;
+}
+
+.about-name {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.about-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.about-table th {
+  width: 96px;
+  padding: 6px 12px 6px 0;
+  color: var(--muted);
+  font-weight: 500;
+  text-align: left;
+  vertical-align: top;
+}
+
+.about-table td {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.about-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.about-table .wrap {
+  word-break: break-all;
+}
+
+.menu-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 kbd {
   display: inline-block;
   padding: 1px 6px;
