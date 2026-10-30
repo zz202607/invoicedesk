@@ -26,11 +26,18 @@ from pathlib import Path
 import fitz
 
 from app.core import db, learning
-from app.core.appconfig import IMPORT_DATA_SUBDIR
+from app.core.appconfig import EXPORT_SUBDIR, LEGACY_DATA_SUBDIR
 from app.core.parser import parse_pdf
 from app.core.text import normalize
 
-SKIP_DIRS = {"分类合并结果", "__pycache__", ".git", "out", IMPORT_DATA_SUBDIR}
+SKIP_DIRS = {
+    "分类合并结果",
+    "__pycache__",
+    ".git",
+    "out",
+    EXPORT_SUBDIR,
+    LEGACY_DATA_SUBDIR,
+}
 HASH_CHUNK_SIZE = 1024 * 1024
 CONFLICT_WARNING = "票号相同但开票日期/金额/销售方不一致,需人工核对"
 INCOMPLETE_WARNING = "关键字段缺失,无法确认是否重复,需人工核对"

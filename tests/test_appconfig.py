@@ -152,22 +152,42 @@ def test_settings_survive_a_corrupt_write(tmp_path, monkeypatch) -> None:
     assert appconfig.load() == {"welcome_done": False}
 
 
-def test_data_dir_for_import_creates_a_subfolder(tmp_path) -> None:
+def test_export_dir_reads_an_absolute_normalized_path(monkeypatch, tmp_path) -> None:
+    messy = str(tmp_path / "成果" / ".." / "成果")
+    monkeypatch.setattr(appconfig, "load", lambda: {"export_dir": messy})
+    assert appconfig.export_dir() == tmp_path / "成果"
+    monkeypatch.setattr(appconfig, "load", lambda: {"export_dir": "relative/out"})
+    assert appconfig.export_dir() is None
+    monkeypatch.setattr(appconfig, "load", lambda: {"export_dir": 42})
+    assert appconfig.export_dir() is None
+    monkeypatch.setattr(appconfig, "load", dict)
+    assert appconfig.export_dir() is None
+
+
+def test_remember_export_dir_is_independent_of_the_data_dir(cfg, tmp_path) -> None:
+    appconfig.save({"data_dir": str(tmp_path / "库"), "welcome_done": True})
+    appconfig.remember_export_dir(tmp_path / "成果")
+    assert appconfig.export_dir() == tmp_path / "成果"
+    assert appconfig.data_dir() == tmp_path / "库"
+    assert appconfig.welcome_done() is True
+
+
+def test_export_dir_for_import_creates_a_subfolder(tmp_path) -> None:
     folder = tmp_path / "2026年10月" / "发票"
     folder.mkdir(parents=True)
-    expected = (folder / appconfig.IMPORT_DATA_SUBDIR).resolve()
-    assert appconfig.data_dir_for_import(folder) == expected
-    assert appconfig.data_dir_for_import(str(folder)) == expected
+    expected = (folder / appconfig.EXPORT_SUBDIR).resolve()
+    assert appconfig.export_dir_for_import(folder) == expected
+    assert appconfig.export_dir_for_import(str(folder)) == expected
 
 
-def test_data_dir_for_import_uses_the_parent_of_a_file(tmp_path) -> None:
+def test_export_dir_for_import_uses_the_parent_of_a_file(tmp_path) -> None:
     folder = tmp_path / "invoices"
     folder.mkdir()
     pdf = folder / "a.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     assert (
-        appconfig.data_dir_for_import(pdf)
-        == (folder / appconfig.IMPORT_DATA_SUBDIR).resolve()
+        appconfig.export_dir_for_import(pdf)
+        == (folder / appconfig.EXPORT_SUBDIR).resolve()
     )
 
 

@@ -100,6 +100,21 @@ def test_configured_data_dir_wins_over_the_home_override(
     assert runtime.default_db_path() == tmp_path / "chosen" / "invoicedesk.db"
 
 
+def test_configured_export_dir_wins_over_the_data_folder(monkeypatch, tmp_path) -> None:
+    _dev_mode(monkeypatch)
+    monkeypatch.setattr(
+        appconfig,
+        "load",
+        lambda: {
+            "data_dir": str(tmp_path / "data"),
+            "export_dir": str(tmp_path / "成果"),
+        },
+    )
+    assert runtime.default_db_path() == tmp_path / "data" / "invoicedesk.db"
+    assert runtime.default_out_dir() == tmp_path / "成果"
+    assert runtime.log_file() == tmp_path / "data" / "logs" / "invoicedesk.log"
+
+
 def test_relative_configured_data_dir_is_ignored(monkeypatch) -> None:
     _dev_mode(monkeypatch)
     monkeypatch.setattr(appconfig, "load", lambda: {"data_dir": "custom"})

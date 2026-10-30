@@ -9,9 +9,15 @@ Resolution order for the database, exports, and logs:
 
 1. ``INVOICEDESK_DB`` / ``INVOICEDESK_OUT`` environment variables (read by
    :mod:`app.main`),
-2. ``data_dir`` in this file,
+2. ``data_dir`` / ``export_dir`` in this file,
 3. the app home (``INVOICEDESK_HOME`` or ``%LOCALAPPDATA%\\InvoiceDesk``) for
    packaged builds, ``data/`` and ``out/`` for a source checkout.
+
+The pool, backups, and logs stay together in the data folder. Exports are a
+separate choice: packaged builds put them in ``报销发票整理`` inside the folder
+the invoices came from, so the folder beside a user's invoices only ever
+receives generated files, never the database. ``export_dir`` records that
+choice.
 
 Switching directories is only offered while the database has no batches and no
 reports, so it can never orphan existing data. Picking a folder that already
@@ -32,10 +38,15 @@ from app.core.paths import is_unsafe_repo_path, remote_storage_reason, repo_root
 
 CONFIG_FILENAME = "config.json"
 DATA_DIR_KEY = "data_dir"
+EXPORT_DIR_KEY = "export_dir"
 WELCOME_DONE_KEY = "welcome_done"
-# Created inside the first import folder when no data folder was pinned. The
-# pool, backups, exports, and logs live there, never beside the source PDFs.
-IMPORT_DATA_SUBDIR = "InvoiceDeskData"
+# Created inside the folder that was imported from. It holds generated exports
+# only, directly in the folder (no extra export/ layer); the pool, backups, and
+# logs stay in the data folder.
+EXPORT_SUBDIR = "报销发票整理"
+# Older builds put the pool, backups, exports, and logs beside the invoices.
+# The name is still skipped while scanning so legacy folders are never imported.
+LEGACY_DATA_SUBDIR = "InvoiceDeskData"
 DB_FILENAME = "invoicedesk.db"
 
 # Sync clients that do not set an environment root (unlike OneDrive). Only the
@@ -88,6 +99,17 @@ def save(values: dict[str, Any]) -> None:
             temp.unlink(missing_ok=True)
 
 
+def _stored_path(key: str) -> Path | None:
+    """An absolute folder from the settings file, normalized, or ``None``."""
+    raw = load().get(key)
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        return None
+    return Path(os.path.normpath(path))
+
+
 def data_dir() -> Path | None:
     """The chosen data folder, or ``None`` when the default applies.
 
@@ -97,13 +119,18 @@ def data_dir() -> Path | None:
     still refuses remote, synced, and repository paths, and SQLite refuses a
     database from a newer version or a foreign schema.
     """
-    raw = load().get(DATA_DIR_KEY)
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    path = Path(raw).expanduser()
-    if not path.is_absolute():
-        return None
-    return Path(os.path.normpath(path))
+    return _stored_path(DATA_DIR_KEY)
+
+
+def export_dir() -> Path | None:
+    """The folder that receives exported files, when one was remembered.
+
+    It is deliberately independent of :func:`data_dir`: the pool may live in
+    the app home while exports sit beside the month's invoices. The output
+    guards in :func:`app.api.Api._output_root` still refuse remote, synced, and
+    repository paths on every write.
+    """
+    return _stored_path(EXPORT_DIR_KEY)
 
 
 def welcome_done() -> bool:
@@ -122,6 +149,12 @@ def remember_data_dir(path: str | Path) -> None:
     save(values)
 
 
+def remember_export_dir(path: str | Path) -> None:
+    values = load()
+    values[EXPORT_DIR_KEY] = str(path)
+    save(values)
+
+
 def known_sync_folder(path: str | Path) -> str | None:
     """Name of a well-known local sync folder the path sits inside, if any."""
     for part in Path(path).parts:
@@ -131,17 +164,17 @@ def known_sync_folder(path: str | Path) -> str | None:
     return None
 
 
-def data_dir_for_import(folder: str | Path) -> Path:
-    """Folder that stores the pool when the first import decides the location.
+def export_dir_for_import(folder: str | Path) -> Path:
+    """Where this invoice folder's generated files land.
 
-    The returned path is normalized like :func:`data_dir`; callers still run
+    The returned path is normalized like :func:`export_dir`; callers still run
     it through :func:`resolve_data_dir` so remote and repository paths are
     refused exactly like a hand-picked folder.
     """
     source = Path(folder).expanduser()
     if source.is_file():
         source = source.parent
-    return Path(os.path.normpath(source.resolve() / IMPORT_DATA_SUBDIR))
+    return Path(os.path.normpath(source.resolve() / EXPORT_SUBDIR))
 
 
 def resolve_data_dir(raw: str | Path) -> Path:

@@ -45,7 +45,7 @@ from app.core.export import (
 )
 from app.core.export import summarize as summarize_export
 from app.core.group_pdf import GROUP_DIRNAME, write_group_pdfs
-from app.core.paths import output_path_reason
+from app.core.paths import output_path_reason, remote_storage_reason
 from app.core.print_pdf import PRINT_FILENAME, write_print_pdf
 from app.core.report_export import LAYOUTS, report_filename, write_report_workbook
 from app.core.reports import ReportError
@@ -439,6 +439,9 @@ class Api:
         self._db_path = (
             Path(db_path) if db_path is not None else runtime.default_db_path()
         )
+        # An explicit out_dir (the CLI flag / INVOICEDESK_OUT) belongs to the
+        # caller; imports must never move it.
+        self._out_dir_fixed = out_dir is not None
         self._out_dir = (
             Path(out_dir) if out_dir is not None else runtime.default_out_dir()
         )
@@ -451,18 +454,16 @@ class Api:
     def _connect(self) -> sqlite3.Connection:
         return db.connect(self._db_path)
 
-    def _output_dir(self, name: str) -> Path:
+    def _output_root(self) -> Path:
+        """The export folder itself; generated files go directly inside it."""
         root = self._out_dir.expanduser().resolve()
-        target = (root / name).resolve()
-        if not target.is_relative_to(root):
-            raise ReportError("输出目录不合法。")
-        reason = output_path_reason(target)
+        reason = output_path_reason(root)
         if reason is not None:
             raise ReportError(
                 f"输出路径{reason}，财务数据只允许保存在本机固定盘。"
             )
-        target.mkdir(parents=True, exist_ok=True)
-        return target
+        root.mkdir(parents=True, exist_ok=True)
+        return root
 
     # ---------------------------------------------------------------- read
 
@@ -510,6 +511,7 @@ class Api:
             "frozen": runtime.is_frozen(),
             "data_dir": str(Path(self._db_path).resolve().parent),
             "data_dir_pinned": appconfig.data_dir() is not None,
+            "export_dir": str(Path(self._out_dir).expanduser().resolve()),
             "suggested_data_dir": str(runtime.suggested_data_dir()),
             # The wizard can only change the data folder while nothing has
             # been written, so an upgrade never hides an existing pool.
@@ -612,6 +614,10 @@ class Api:
         except OSError as exc:
             raise ReportError("无法保存设置，请检查程序目录的写入权限。") from exc
         self._pin_data_dir(target)
+        if not self._out_dir_fixed:
+            # Follow the new data folder until the next import pins an export
+            # folder beside that month's invoices.
+            self._out_dir = runtime.default_out_dir()
         return {
             "data_dir": str(target),
             "db_name": target_db.name,
@@ -627,82 +633,72 @@ class Api:
         return not (batches or report_count)
 
     def _pin_data_dir(self, target: Path) -> None:
-        """Point every read/write path at ``target`` and drop cached state."""
+        """Point database reads/writes at ``target`` and drop cached state."""
         self._db_path = target / appconfig.DB_FILENAME
-        self._out_dir = target / "out"
         self._import_plan = None
         self._preview_cache.clear()
 
-    def _import_data_dir_preview(self, source: Path) -> str | None:
-        """Where the first import will store the pool, or None when pinned.
+    def _import_export_dir_preview(self, source: Path) -> str | None:
+        """Where this import's generated files will land, or None when fixed.
 
-        Read-only: the wizard uses this to tell the user where data will land
-        before anything is written.
+        Read-only: the confirmation dialog shows this before anything is
+        written. Source checkouts and an explicit output directory keep their
+        own location on purpose.
         """
-        # Source checkouts keep data/ beside the code on purpose; only a
-        # packaged app (or an explicit INVOICEDESK_HOME) has a default home
-        # that can be replaced by the import folder.
-        if (
-            not runtime.uses_app_home()
-            or appconfig.data_dir() is not None
-            or not self._pool_is_empty()
-        ):
+        if self._out_dir_fixed or not runtime.uses_app_home():
             return None
-        sync_folder = appconfig.known_sync_folder(source)
-        if sync_folder is not None:
-            print(
-                f"[api] data dir not adopted: inside sync folder {sync_folder}",
-                file=sys.stderr,
-            )
+        if appconfig.known_sync_folder(source) is not None:
             return None
-        candidate = appconfig.data_dir_for_import(source)
+        candidate = appconfig.export_dir_for_import(source)
         try:
             candidate = appconfig.resolve_data_dir(candidate)
         except appconfig.ConfigError:
             return None
-        if candidate == Path(self._db_path).resolve().parent:
+        if candidate == Path(self._out_dir).expanduser().resolve():
             return None
         return str(candidate)
 
-    def _import_data_dir_note(self, source: Path) -> str | None:
-        """Why the import will not adopt a data folder inside a sync directory."""
-        if (
-            not runtime.uses_app_home()
-            or appconfig.data_dir() is not None
-            or not self._pool_is_empty()
-        ):
+    def _import_export_dir_note(self, source: Path) -> str | None:
+        """Why exports stay put for a synced or remote invoice folder."""
+        if self._out_dir_fixed or not runtime.uses_app_home():
             return None
         sync_folder = appconfig.known_sync_folder(source)
-        if sync_folder is None:
-            return None
-        return (
-            f"这个文件夹在 {sync_folder} 同步目录中，财务数据不会保存在那里；"
-            "仍使用当前数据目录。"
-        )
+        if sync_folder is not None:
+            return (
+                f"这个文件夹在 {sync_folder} 同步目录中，导出成果不会保存在那里；"
+                "仍使用当前导出目录。"
+            )
+        reason = remote_storage_reason(source)
+        if reason is not None:
+            return (
+                f"这个文件夹位于{reason}，导出成果只保存在本机固定盘；"
+                "仍使用当前导出目录。"
+            )
+        return None
 
-    def _adopt_import_data_dir(self, source_dir: str) -> str | None:
-        """Pin the first import folder as the data folder when none was chosen.
+    def _adopt_import_export_dir(self, source_dir: str) -> str | None:
+        """Pin exports to ``报销发票整理`` beside the imported invoices.
 
-        Only an empty pool adopts: moving an established pool silently would
-        strand invoices. A failed settings write leaves the current folder in
-        place so the import still runs.
+        The import itself never moves the pool; only the output folder follows
+        the month being imported. A failed settings write stops before any row
+        is written, because the confirmation dialog named that folder.
         """
-        preview = self._import_data_dir_preview(Path(source_dir))
+        preview = self._import_export_dir_preview(Path(source_dir))
         if preview is None:
             return None
         target = Path(preview)
         try:
             appconfig.ensure_writable_dir(target)
-            appconfig.remember_data_dir(target)
+            appconfig.remember_export_dir(target)
         except (appconfig.ConfigError, OSError) as exc:
-            # The confirmation dialog named this folder; writing elsewhere
-            # silently would break that promise. Stop before any row is written.
             raise ReportError(
-                f"无法把数据目录切换到 {target}：{redact_paths(str(exc))}。"
-                "请检查文件夹权限，或在首次向导里指定固定的数据目录。"
+                f"无法把导出目录切换到 {target}：{redact_paths(str(exc))}。"
+                "请检查该发票文件夹的写入权限后再导入。"
             ) from exc
-        self._pin_data_dir(target)
-        print(f"[api] data dir adopted: {redact_paths(str(target))}", file=sys.stderr)
+        self._out_dir = target
+        print(
+            f"[api] export dir adopted: {redact_paths(str(target))}", file=sys.stderr
+        )
         return str(target)
 
     @_endpoint
@@ -1222,7 +1218,7 @@ class Api:
         layout: str = "project",
         project_header: str = "",
     ) -> dict[str, Any]:
-        out = self._output_dir("report")
+        out = self._output_root()
         with contextlib.closing(self._connect()) as connection:
             report = reports.get_report(connection, int(report_id))
             lines = reports.report_lines(connection, int(report_id))
@@ -1258,7 +1254,7 @@ class Api:
         filters: dict[str, Any] | None = None,
         company_hint: str = "",
     ) -> dict[str, Any]:
-        out = self._output_dir("export")
+        out = self._output_root()
         export_filters = _export_filters(filters or {})
         hint = str(company_hint or "").strip()[:200]
         with contextlib.closing(self._connect()) as connection:
@@ -1329,10 +1325,10 @@ class Api:
 
     @_endpoint
     def open_output_folder(self, kind: str = "export") -> dict[str, Any]:
-        """Open ``out/<kind>`` so the user can find exported files afterwards."""
+        """Open the export folder so the user can find generated files."""
         if kind not in {"export", "report"}:
             raise ReportError("输出目录不合法。")
-        target = self._output_dir(kind)
+        target = self._output_root()
         _open_folder(target)
         return {"path": str(target)}
 
@@ -1509,8 +1505,10 @@ class Api:
             "duplicate_files": plan.duplicate_files,
             "ocr_pages": plan.ocr_pages,
             "reparse_candidates": plan.reparse_candidates,
-            "data_dir_preview": self._import_data_dir_preview(Path(plan.source_dir)),
-            "data_dir_note": self._import_data_dir_note(Path(plan.source_dir)),
+            "export_dir_preview": self._import_export_dir_preview(
+                Path(plan.source_dir)
+            ),
+            "export_dir_note": self._import_export_dir_note(Path(plan.source_dir)),
         }
 
     @_endpoint
@@ -1522,7 +1520,7 @@ class Api:
         if job is not None and job.running:
             raise ReportError("已有导入正在进行，请等待完成或先取消。")
         plan = self._take_import_plan(str(token or "").strip(), path, label)
-        adopted = self._adopt_import_data_dir(plan.source_dir)
+        adopted = self._adopt_import_export_dir(plan.source_dir)
         job = _ImportJob(uuid4().hex)
         job.progress("parse", 0, plan.new_files, "")
         self._import_job = job
@@ -1538,7 +1536,8 @@ class Api:
             "label": plan.label,
             "total": plan.new_files,
             "data_dir": str(Path(self._db_path).resolve().parent),
-            "adopted_data_dir": adopted,
+            "export_dir": str(Path(self._out_dir).expanduser().resolve()),
+            "adopted_export_dir": adopted,
         }
 
     @_endpoint
@@ -1566,6 +1565,7 @@ class Api:
         if job is not None and job.running:
             raise ReportError("已有导入正在进行，请等待完成或先取消。")
         source = self._import_source(path)
+        self._adopt_import_export_dir(str(source))
         with contextlib.closing(self._connect()) as connection:
             summary = importer.import_folder(
                 connection, source, label=(label.strip() or None)
