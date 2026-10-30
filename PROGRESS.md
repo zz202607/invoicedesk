@@ -1,7 +1,7 @@
 # 发票管家（InvoiceDesk）· PROGRESS
 
 > 最后更新：2026-10-30
-> 当前阶段：**v1.0.0 版本信息、关于弹窗与 README 截图已完成（10-30）**；新构建 `build/dist-v1.0` 待替换 `dist`；下一步 PR 与实机点按
+> 当前阶段：**v1.0.0 版本信息、关于弹窗与 README 截图已完成（10-30，PR #17 CI 全绿待确认合并）**；新构建 `build/dist-v1.0` 待替换 `dist`
 > 分支：`main` · 仓库：[invoicedesk](https://github.com/zz202607/invoicedesk)
 
 ## 现在
