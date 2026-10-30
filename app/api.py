@@ -1565,7 +1565,12 @@ class Api:
         if job is not None and job.running:
             raise ReportError("已有导入正在进行，请等待完成或先取消。")
         source = self._import_source(path)
-        self._adopt_import_export_dir(str(source))
+        try:
+            self._adopt_import_export_dir(str(source))
+        except ReportError as exc:
+            # No dialog named a folder on this legacy path; an import from
+            # read-only media must still run and export to the current folder.
+            print(f"[api] export dir not adopted: {exc}", file=sys.stderr)
         with contextlib.closing(self._connect()) as connection:
             summary = importer.import_folder(
                 connection, source, label=(label.strip() or None)

@@ -216,14 +216,53 @@ def copy_data_dir(source_home: str | Path, target: str | Path) -> dict:
     }
 
 
+def _same_file(source: Path, destination: Path) -> bool:
+    return (
+        destination.is_file()
+        and source.stat().st_size == destination.stat().st_size
+        and filecmp.cmp(source, destination, shallow=False)
+    )
+
+
+def _check_file(source: Path, destination: Path) -> None:
+    """Raise exactly where :func:`_copy_file` would, without writing."""
+    if destination.exists() and not _same_file(source, destination):
+        raise DataMoveError(f"目标已有不同文件，已停止：{destination}")
+
+
+def _check_tree(source: Path, target: Path) -> None:
+    if not source.is_dir():
+        return
+    for item in sorted(source.rglob("*")):
+        if item.is_file():
+            _check_file(item, target / item.relative_to(source))
+
+
+def _check_conflicts(source_path: Path, home_path: Path, export_path: Path) -> None:
+    """Mirror the copy plan read-only so a dry run sees the same conflicts."""
+    for entry in sorted(source_path.iterdir(), key=lambda item: item.name):
+        if entry.name in SKIP_ENTRIES or entry.name == "out":
+            continue
+        if entry.is_dir():
+            _check_tree(entry, home_path / entry.name)
+        else:
+            _check_file(entry, home_path / entry.name)
+    source_out = source_path / "out"
+    if not source_out.is_dir():
+        return
+    for child in sorted(source_out.iterdir(), key=lambda item: item.name):
+        if child.is_dir() and child.name in FLATTENED_OUTPUT_DIRS:
+            _check_tree(child, export_path)
+        elif child.is_dir():
+            _check_tree(child, export_path / child.name)
+        else:
+            _check_file(child, export_path / child.name)
+
+
 def _copy_file(source: Path, destination: Path) -> bool:
     """Copy one file unless it already exists byte-for-byte. Never overwrites."""
     if destination.exists():
-        if (
-            destination.is_file()
-            and source.stat().st_size == destination.stat().st_size
-            and filecmp.cmp(source, destination, shallow=False)
-        ):
+        if _same_file(source, destination):
             return False
         raise DataMoveError(f"目标已有不同文件，已停止：{destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -313,6 +352,7 @@ def split_data_dir(
         # A dry run must reach the same verdict as the real run, or a user
         # could delete the legacy folder after a "successful" preview.
         raise DataMoveError(f"数据目录已有不同的发票库，已停止：{home_db}")
+    _check_conflicts(source_path, home_path, export_path)
     if dry_run:
         return result
 

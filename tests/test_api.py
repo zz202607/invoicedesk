@@ -1764,27 +1764,6 @@ def test_explicit_out_dir_is_never_moved(
     assert not (folder / appconfig.EXPORT_SUBDIR).exists()
 
 
-def test_import_start_stops_when_the_export_folder_cannot_be_pinned(
-    tmp_path, app_config, monkeypatch
-) -> None:
-    api = _packaged_api(tmp_path, monkeypatch)
-    folder = tmp_path / "发票"
-    folder.mkdir()
-    make_pdf(folder, full_digital_lines(), name="a.pdf")
-
-    def fail(path):
-        raise OSError("denied")
-
-    monkeypatch.setattr(api_module.appconfig, "ensure_writable_dir", fail)
-    response = api.import_start(str(folder))
-
-    assert response["ok"] is False
-    assert "导出目录" in response["error"]
-    assert appconfig.export_dir() is None
-    assert api._out_dir == tmp_path / "home-out"
-    assert _invoice_count(tmp_path / "workbench.db") == 0
-
-
 def test_import_folder_adopts_the_export_folder(
     tmp_path, app_config, monkeypatch
 ) -> None:
@@ -1804,8 +1783,8 @@ def test_import_folder_adopts_the_export_folder(
     assert not (target / "invoicedesk.db").exists()
 
 
-def test_import_folder_stops_when_the_export_folder_cannot_be_pinned(
-    tmp_path, app_config, monkeypatch
+def test_import_folder_keeps_importing_when_exports_cannot_be_pinned(
+    tmp_path, app_config, monkeypatch, capsys
 ) -> None:
     api = _packaged_api(tmp_path, monkeypatch)
     folder = tmp_path / "发票"
@@ -1818,10 +1797,12 @@ def test_import_folder_stops_when_the_export_folder_cannot_be_pinned(
     monkeypatch.setattr(api_module.appconfig, "ensure_writable_dir", fail)
     response = api.import_folder(str(folder))
 
-    assert response["ok"] is False
-    assert "导出目录" in response["error"]
+    assert response["ok"] is True, response
+    assert response["data"]["invoices_imported"] == 1
     assert appconfig.export_dir() is None
-    assert _invoice_count(tmp_path / "workbench.db") == 0
+    assert api._out_dir == tmp_path / "home-out"
+    assert _invoice_count(tmp_path / "workbench.db") == 1
+    assert "export dir not adopted" in capsys.readouterr().err
 
 
 def test_import_folder_does_not_move_an_explicit_output(
@@ -1851,11 +1832,13 @@ def test_source_checkout_keeps_the_default_export_dir(
 
     planned = api.import_preflight(str(folder))
     assert planned["data"]["export_dir_preview"] is None
+    assert planned["data"]["export_dir_note"] is None
     started = api.import_start(str(folder))
     assert started["data"]["adopted_export_dir"] is None
     _wait_import(api, started["data"]["job_id"])
 
     assert api._out_dir == tmp_path / "out"
+    assert appconfig.export_dir() is None
     assert _invoice_count(tmp_path / "workbench.db") == 1
     assert not (folder / appconfig.EXPORT_SUBDIR).exists()
 

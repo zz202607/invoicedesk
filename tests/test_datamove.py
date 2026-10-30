@@ -184,10 +184,10 @@ def test_split_data_dir_moves_the_pool_home_and_leaves_exports(tmp_path) -> None
     assert (home / "logs" / "invoicedesk.log").is_file()
     export = legacy.parent / "报销发票整理"
     # Legacy export/ and report/ wrappers are flattened away.
-    assert (export / "发票明细.xlsx").is_file()
-    assert (export / "报销单.xlsx").is_file()
-    assert (export / "直接文件.xlsx").is_file()
-    assert (export / "分类合并结果" / "分类.pdf").is_file()
+    assert (export / "发票明细.xlsx").read_bytes() == b"xlsx"
+    assert (export / "报销单.xlsx").read_bytes() == b"report"
+    assert (export / "直接文件.xlsx").read_bytes() == b"direct"
+    assert (export / "分类合并结果" / "分类.pdf").read_bytes() == b"pdf"
     assert not (export / "export").exists()
     assert not (export / "report").exists()
     assert not (home / "out").exists()
@@ -244,6 +244,49 @@ def test_split_data_dir_refuses_to_overwrite_a_different_export(tmp_path) -> Non
 
     with pytest.raises(datamove.DataMoveError, match="不同文件"):
         datamove.split_data_dir(legacy, tmp_path / "app-home", export_dir=export)
+
+
+def test_split_data_dir_conflict_leaves_config_untouched(tmp_path) -> None:
+    legacy = _make_legacy(tmp_path)
+    home = tmp_path / "app-home"
+    home.mkdir()
+    config = home / "config.json"
+    config.write_text(json.dumps({"data_dir": "old"}), encoding="utf-8")
+    before = config.read_bytes()
+    backup = home / "backups" / "invoicedesk-20260101-000000-startup.db"
+    backup.parent.mkdir()
+    backup.write_bytes(b"different")
+
+    with pytest.raises(datamove.DataMoveError, match="不同文件"):
+        datamove.split_data_dir(legacy, home, config_file=config)
+    assert config.read_bytes() == before
+    assert backup.read_bytes() == b"different"
+
+    backup.unlink()
+    again = datamove.split_data_dir(legacy, home, config_file=config)
+    assert again["copied_home"]
+    assert backup.read_bytes() == b"snap"
+
+
+def test_split_data_dir_dry_run_reports_a_non_database_conflict(tmp_path) -> None:
+    legacy = _make_legacy(tmp_path)
+    home = tmp_path / "app-home"
+    backup = home / "backups" / "invoicedesk-20260101-000000-startup.db"
+    backup.parent.mkdir(parents=True)
+    backup.write_bytes(b"different")
+
+    with pytest.raises(datamove.DataMoveError, match="不同文件"):
+        datamove.split_data_dir(legacy, home, dry_run=True)
+
+
+def test_split_data_dir_dry_run_reports_an_export_conflict(tmp_path) -> None:
+    legacy = _make_legacy(tmp_path)
+    export = legacy.parent / "报销发票整理"
+    export.mkdir()
+    (export / "发票明细.xlsx").write_bytes(b"different")
+
+    with pytest.raises(datamove.DataMoveError, match="不同文件"):
+        datamove.split_data_dir(legacy, tmp_path / "app-home", dry_run=True)
 
 
 def test_split_data_dir_dry_run_reports_a_different_pool(tmp_path) -> None:
