@@ -150,3 +150,32 @@ def test_settings_survive_a_corrupt_write(tmp_path, monkeypatch) -> None:
     (tmp_path / "config.json.tmp").write_text("junk", encoding="utf-8")
     appconfig.save({"welcome_done": False})
     assert appconfig.load() == {"welcome_done": False}
+
+
+def test_data_dir_for_import_creates_a_subfolder(tmp_path) -> None:
+    folder = tmp_path / "2026年10月" / "发票"
+    folder.mkdir(parents=True)
+    expected = (folder / appconfig.IMPORT_DATA_SUBDIR).resolve()
+    assert appconfig.data_dir_for_import(folder) == expected
+    assert appconfig.data_dir_for_import(str(folder)) == expected
+
+
+def test_data_dir_for_import_uses_the_parent_of_a_file(tmp_path) -> None:
+    folder = tmp_path / "invoices"
+    folder.mkdir()
+    pdf = folder / "a.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    assert (
+        appconfig.data_dir_for_import(pdf)
+        == (folder / appconfig.IMPORT_DATA_SUBDIR).resolve()
+    )
+
+
+def test_known_sync_folder_matches_only_the_named_directory(tmp_path) -> None:
+    assert appconfig.known_sync_folder(tmp_path / "Dropbox" / "发票") == "Dropbox"
+    assert (
+        appconfig.known_sync_folder(tmp_path / "Google Drive" / "发票")
+        == "Google Drive"
+    )
+    assert appconfig.known_sync_folder(tmp_path / "发票" / "dropbox") == "dropbox"
+    assert appconfig.known_sync_folder(tmp_path / "发票") is None

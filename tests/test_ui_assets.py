@@ -340,8 +340,14 @@ def test_first_run_wizard_is_wired_to_the_bridge() -> None:
     assert "欢迎使用发票管家" in html
     assert "源发票只读" in html
     assert "财务数据只在本机" in html
-    # A data folder is chosen and adopted through the bridge.
-    assert "选择数据目录" in html
+    # A data folder is chosen and adopted through the bridge; the default is
+    # to follow the first import folder instead of pinning the app home.
+    assert "数据目录" in html
+    assert "跟随发票文件夹" in html
+    assert "InvoiceDeskData" in html
+    assert "data_dir_preview" in html
+    assert "data_dir_note" in html
+    assert "welcomeFollowImport" in script
     assert "inspect_data_dir" in script
     assert "select_data_dir" in script
     assert "complete_welcome" in script

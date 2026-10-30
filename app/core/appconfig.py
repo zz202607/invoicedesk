@@ -33,6 +33,21 @@ from app.core.paths import is_unsafe_repo_path, remote_storage_reason, repo_root
 CONFIG_FILENAME = "config.json"
 DATA_DIR_KEY = "data_dir"
 WELCOME_DONE_KEY = "welcome_done"
+# Created inside the first import folder when no data folder was pinned. The
+# pool, backups, exports, and logs live there, never beside the source PDFs.
+IMPORT_DATA_SUBDIR = "InvoiceDeskData"
+DB_FILENAME = "invoicedesk.db"
+
+# Sync clients that do not set an environment root (unlike OneDrive). Only the
+# automatic adoption of an import folder consults this list; a folder the user
+# picks by hand is still checked by :func:`resolve_data_dir` alone.
+KNOWN_SYNC_DIR_NAMES = {
+    "dropbox",
+    "google drive",
+    "googledrive",
+    "baidusyncdisk",
+    "nutstore",
+}
 
 
 class ConfigError(ValueError):
@@ -105,6 +120,28 @@ def remember_data_dir(path: str | Path) -> None:
     values = load()
     values[DATA_DIR_KEY] = str(path)
     save(values)
+
+
+def known_sync_folder(path: str | Path) -> str | None:
+    """Name of a well-known local sync folder the path sits inside, if any."""
+    for part in Path(path).parts:
+        folded = part.casefold()
+        if folded in KNOWN_SYNC_DIR_NAMES:
+            return part
+    return None
+
+
+def data_dir_for_import(folder: str | Path) -> Path:
+    """Folder that stores the pool when the first import decides the location.
+
+    The returned path is normalized like :func:`data_dir`; callers still run
+    it through :func:`resolve_data_dir` so remote and repository paths are
+    refused exactly like a hand-picked folder.
+    """
+    source = Path(folder).expanduser()
+    if source.is_file():
+        source = source.parent
+    return Path(os.path.normpath(source.resolve() / IMPORT_DATA_SUBDIR))
 
 
 def resolve_data_dir(raw: str | Path) -> Path:

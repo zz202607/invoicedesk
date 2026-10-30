@@ -18,6 +18,7 @@ createApp({
         unrecognized_count: 0,
         first_run: false,
         data_dir: '',
+        data_dir_pinned: false,
         suggested_data_dir: '',
       },
       loading: true,
@@ -833,11 +834,13 @@ createApp({
       this.welcomeFirstRun = true;
       this.welcomeGuideOnly = false;
       this.welcomeStep = 1;
-      this.welcomeForm = { data_dir: this.boot.data_dir || '' };
+      this.welcomeForm = {
+        data_dir: this.boot.data_dir_pinned ? this.boot.data_dir : '',
+      };
       this.welcomeChecked = false;
       this.welcomeCheck = {
-        path: this.boot.data_dir || '',
-        exists: true,
+        path: this.boot.data_dir_pinned ? this.boot.data_dir : '',
+        exists: this.boot.data_dir_pinned,
         has_database: false,
         invoice_count: 0,
         batch_count: 0,
@@ -876,6 +879,14 @@ createApp({
       } else {
         this.welcomeStep = 1;
       }
+    },
+
+    welcomeFollowImport() {
+      // Leave the data folder unpinned; import_start adopts the first
+      // invoice folder (its InvoiceDeskData subdirectory) automatically.
+      this.welcomeForm.data_dir = '';
+      this.welcomeChecked = false;
+      this.welcomeStep = 3;
     },
 
     async welcomeInspect() {

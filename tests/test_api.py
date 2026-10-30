@@ -1519,3 +1519,172 @@ def test_select_data_dir_rejects_a_foreign_sqlite_database(
     assert api._db_path == before
     assert appconfig.data_dir() is None
     assert not app_config.exists()
+
+
+def _invoice_count(db_path: Path) -> int:
+    connection = db.connect(db_path)
+    try:
+        return connection.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
+    finally:
+        connection.close()
+
+
+def test_first_import_adopts_the_invoice_folder(
+    api: Api, tmp_path, app_config, monkeypatch
+) -> None:
+    monkeypatch.setattr(api_module.runtime, "uses_app_home", lambda: True)
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    source_pdf = make_pdf(folder, full_digital_lines(), name="a.pdf")
+    source_bytes = source_pdf.read_bytes()
+    old_db = Path(api._db_path)
+    target = folder / appconfig.IMPORT_DATA_SUBDIR
+
+    planned = api.import_preflight(str(folder))
+    assert planned["ok"] is True, planned
+    assert planned["data"]["data_dir_preview"] == str(target.resolve())
+
+    started = api.import_start(str(folder))
+    assert started["ok"] is True, started
+    assert started["data"]["adopted_data_dir"] == str(target.resolve())
+    state = _wait_import(api, started["data"]["job_id"])
+    assert state["status"] == "done", state
+
+    assert appconfig.data_dir() == target.resolve()
+    assert _invoice_count(target / "invoicedesk.db") == 1
+    # The old default database keeps its schema but no invoices.
+    assert _invoice_count(old_db) == 0
+    # Source files and the rest of the folder are untouched.
+    assert source_pdf.read_bytes() == source_bytes
+    assert {entry.name for entry in folder.iterdir()} == {
+        "a.pdf",
+        appconfig.IMPORT_DATA_SUBDIR,
+    }
+    boot = api.bootstrap()["data"]
+    assert boot["data_dir"] == str(target.resolve())
+    assert boot["data_dir_pinned"] is True
+
+    # The pool is no longer empty, so a second import stays put.
+    second = api.import_preflight(str(folder))
+    assert second["data"]["data_dir_preview"] is None
+
+
+def test_adoption_is_skipped_when_the_data_dir_is_pinned(
+    api: Api, tmp_path, app_config, monkeypatch
+) -> None:
+    monkeypatch.setattr(api_module.runtime, "uses_app_home", lambda: True)
+    pinned = tmp_path / "固定目录"
+    pinned.mkdir()
+    appconfig.remember_data_dir(pinned)
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    planned = api.import_preflight(str(folder))
+    assert planned["data"]["data_dir_preview"] is None
+    started = api.import_start(str(folder))
+    assert started["data"]["adopted_data_dir"] is None
+    _wait_import(api, started["data"]["job_id"])
+    assert not (folder / appconfig.IMPORT_DATA_SUBDIR).exists()
+
+
+def test_adoption_requires_an_empty_pool(
+    api: Api, tmp_path, app_config, monkeypatch
+) -> None:
+    monkeypatch.setattr(api_module.runtime, "uses_app_home", lambda: True)
+    _add_invoice(tmp_path)
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    planned = api.import_preflight(str(folder))
+    assert planned["data"]["data_dir_preview"] is None
+    started = api.import_start(str(folder))
+    assert started["data"]["adopted_data_dir"] is None
+    _wait_import(api, started["data"]["job_id"])
+    assert not (folder / appconfig.IMPORT_DATA_SUBDIR).exists()
+
+
+def test_source_checkout_keeps_the_default_data_dir(
+    api: Api, tmp_path, app_config
+) -> None:
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    planned = api.import_preflight(str(folder))
+    assert planned["data"]["data_dir_preview"] is None
+    started = api.import_start(str(folder))
+    assert started["data"]["adopted_data_dir"] is None
+    _wait_import(api, started["data"]["job_id"])
+    assert not (folder / appconfig.IMPORT_DATA_SUBDIR).exists()
+    assert _invoice_count(tmp_path / "workbench.db") == 1
+
+
+def test_adoption_failure_stops_the_import(
+    api: Api, tmp_path, app_config, monkeypatch
+) -> None:
+    monkeypatch.setattr(api_module.runtime, "uses_app_home", lambda: True)
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+    target = folder / appconfig.IMPORT_DATA_SUBDIR
+    old_db = Path(api._db_path)
+
+    def deny(path):
+        raise OSError("denied")
+
+    monkeypatch.setattr(appconfig, "remember_data_dir", deny)
+
+    planned = api.import_preflight(str(folder))
+    assert planned["data"]["data_dir_preview"] == str(target.resolve())
+    started = api.import_start(str(folder))
+    assert started["ok"] is False
+    assert "数据目录" in started["error"]
+    # Nothing was imported and the pointer never changed.
+    assert api.import_status("")["data"]["status"] == "idle"
+    assert _invoice_count(old_db) == 0
+    assert not (target / "invoicedesk.db").exists()
+    assert appconfig.data_dir() is None
+
+
+def test_adoption_skips_an_unsafe_target(
+    api: Api, tmp_path, app_config, monkeypatch
+) -> None:
+    monkeypatch.setattr(api_module.runtime, "uses_app_home", lambda: True)
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+    old_db = Path(api._db_path)
+
+    def unsafe(path):
+        raise appconfig.ConfigError("数据目录位于云同步目录")
+
+    monkeypatch.setattr(appconfig, "resolve_data_dir", unsafe)
+
+    planned = api.import_preflight(str(folder))
+    assert planned["data"]["data_dir_preview"] is None
+    started = api.import_start(str(folder))
+    assert started["data"]["adopted_data_dir"] is None
+    _wait_import(api, started["data"]["job_id"])
+    assert _invoice_count(old_db) == 1
+    assert not (folder / appconfig.IMPORT_DATA_SUBDIR).exists()
+
+
+def test_adoption_skips_known_sync_folders(
+    api: Api, tmp_path, app_config, monkeypatch
+) -> None:
+    monkeypatch.setattr(api_module.runtime, "uses_app_home", lambda: True)
+    folder = tmp_path / "Dropbox" / "发票"
+    folder.mkdir(parents=True)
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+    old_db = Path(api._db_path)
+
+    planned = api.import_preflight(str(folder))
+    assert planned["data"]["data_dir_preview"] is None
+    assert "Dropbox" in planned["data"]["data_dir_note"]
+    started = api.import_start(str(folder))
+    assert started["data"]["adopted_data_dir"] is None
+    _wait_import(api, started["data"]["job_id"])
+    assert _invoice_count(old_db) == 1
+    assert not (folder / appconfig.IMPORT_DATA_SUBDIR).exists()
