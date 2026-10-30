@@ -635,12 +635,8 @@ class Api:
             with contextlib.closing(
                 sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True)
             ) as connection:
-                version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if version > db.DB_VERSION:
-                    raise db.DatabaseVersionError(
-                        f"数据库版本 {version} 高于当前程序支持的"
-                        f" {db.DB_VERSION}，请升级程序后再打开。"
-                    )
+                # Check the schema first: another program's SQLite file may
+                # carry any user_version, and "please upgrade" would mislead.
                 tables = {
                     row[0]
                     for row in connection.execute(
@@ -650,6 +646,12 @@ class Api:
                 if "invoices" not in tables or "batches" not in tables:
                     raise ReportError(
                         "这个文件夹里的 invoicedesk.db 不是发票管家的数据库。"
+                    )
+                version = connection.execute("PRAGMA user_version").fetchone()[0]
+                if version > db.DB_VERSION:
+                    raise db.DatabaseVersionError(
+                        f"数据库版本 {version} 高于当前程序支持的"
+                        f" {db.DB_VERSION}，请升级程序后再打开。"
                     )
                 columns = {
                     row[1]

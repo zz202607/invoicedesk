@@ -1436,3 +1436,86 @@ def test_inspect_data_dir_treats_an_empty_database_as_new(
     assert data["has_database"] is False
     assert data["invoice_count"] == 0
     assert data["batch_count"] == 0
+
+
+def test_inspect_data_dir_rejects_a_newer_database(api: Api, tmp_path, app_config) -> None:
+    target = tmp_path / "新版数据"
+    target.mkdir()
+    connection = db.connect(target / "invoicedesk.db")
+    try:
+        with connection:
+            connection.execute(f"PRAGMA user_version = {db.DB_VERSION + 1}")
+    finally:
+        connection.close()
+    response = api.inspect_data_dir(str(target))
+    assert response["ok"] is False
+    assert "版本" in response["error"]
+
+
+def test_inspect_data_dir_checks_the_schema_before_the_version(
+    api: Api, tmp_path, app_config
+) -> None:
+    target = tmp_path / "外来库"
+    target.mkdir()
+    connection = sqlite3.connect(target / "invoicedesk.db")
+    try:
+        with connection:
+            connection.execute("CREATE TABLE unrelated (id INTEGER)")
+            connection.execute(f"PRAGMA user_version = {db.DB_VERSION + 1}")
+    finally:
+        connection.close()
+    response = api.inspect_data_dir(str(target))
+    assert response["ok"] is False
+    assert "不是发票管家的数据库" in response["error"]
+
+
+def test_select_data_dir_leaves_settings_alone_when_the_database_is_broken(
+    api: Api, tmp_path, app_config
+) -> None:
+    target = tmp_path / "坏库"
+    target.mkdir()
+    (target / "invoicedesk.db").write_text("not a database", encoding="utf-8")
+    before = api._db_path
+    response = api.select_data_dir(str(target))
+    assert response["ok"] is False
+    assert "invoicedesk.db" in response["error"]
+    assert api._db_path == before
+    assert appconfig.data_dir() is None
+    assert not app_config.exists()
+
+
+def test_select_data_dir_rejects_a_newer_database(api: Api, tmp_path, app_config) -> None:
+    target = tmp_path / "新版数据"
+    target.mkdir()
+    connection = db.connect(target / "invoicedesk.db")
+    try:
+        with connection:
+            connection.execute(f"PRAGMA user_version = {db.DB_VERSION + 1}")
+    finally:
+        connection.close()
+    before = api._db_path
+    response = api.select_data_dir(str(target))
+    assert response["ok"] is False
+    assert "版本" in response["error"]
+    assert api._db_path == before
+    assert not app_config.exists()
+
+
+def test_select_data_dir_rejects_a_foreign_sqlite_database(
+    api: Api, tmp_path, app_config
+) -> None:
+    target = tmp_path / "外来库"
+    target.mkdir()
+    connection = sqlite3.connect(target / "invoicedesk.db")
+    try:
+        with connection:
+            connection.execute("CREATE TABLE unrelated (id INTEGER)")
+    finally:
+        connection.close()
+    before = api._db_path
+    response = api.select_data_dir(str(target))
+    assert response["ok"] is False
+    assert "不是发票管家的数据库" in response["error"]
+    assert api._db_path == before
+    assert appconfig.data_dir() is None
+    assert not app_config.exists()
