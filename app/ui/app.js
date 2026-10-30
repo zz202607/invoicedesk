@@ -94,6 +94,15 @@ createApp({
       },
       showImportModal: false,
       importForm: { path: '', label: '' },
+      importPlan: null,
+      importProgress: {
+        active: false,
+        stage: '',
+        done: 0,
+        total: 0,
+        name: '',
+        cancelling: false,
+      },
       pickingFolder: false,
       showWizard: false,
       wizardStep: 1,
@@ -257,6 +266,18 @@ createApp({
         }
       }
       return names;
+    },
+    importPercent() {
+      const progress = this.importProgress;
+      if (!progress.total) return 0;
+      return Math.min(100, Math.round((progress.done / progress.total) * 100));
+    },
+    importStageText() {
+      const progress = this.importProgress;
+      if (progress.stage === 'reparse') {
+        return `正在补识别旧记录 ${progress.done}/${progress.total}`;
+      }
+      return `正在解析发票 ${progress.done}/${progress.total}`;
     },
     categoryMax() {
       const items = this.dashboard ? this.dashboard.categories : [];
@@ -783,7 +804,12 @@ createApp({
     openImportModal() {
       const recent = this.boot.recent_import_paths || [];
       this.importForm = { path: recent.length ? recent[0] : '', label: '' };
+      this.importPlan = null;
       this.showImportModal = true;
+    },
+
+    resetImportPlan() {
+      this.importPlan = null;
     },
 
     folderName(path) {
@@ -805,8 +831,64 @@ createApp({
       }
     },
 
-    async runImport(path, label) {
-      const data = await this.call('import_folder', path, label || '');
+    async runImportJob(path, label, token) {
+      const started = await this.call(
+        'import_start',
+        path || '',
+        label || '',
+        token || ''
+      );
+      const jobId = started.job_id;
+      this.importProgress = {
+        active: true,
+        stage: 'parse',
+        done: 0,
+        total: started.total || 0,
+        name: '',
+        cancelling: false,
+      };
+      let state = null;
+      try {
+        for (;;) {
+          await new Promise((resolve) => window.setTimeout(resolve, 400));
+          state = await this.silentCall('import_status', jobId);
+          if (!state || state.status === 'idle') {
+            throw new Error('导入状态读取失败');
+          }
+          if (state.status !== 'running') break;
+          this.importProgress = {
+            active: true,
+            stage: state.stage || 'parse',
+            done: state.done || 0,
+            total: state.total || 0,
+            name: state.name || '',
+            cancelling: this.importProgress.cancelling,
+          };
+        }
+      } finally {
+        this.importProgress = {
+          active: false,
+          stage: '',
+          done: 0,
+          total: 0,
+          name: '',
+          cancelling: false,
+        };
+      }
+      if (state.status === 'cancelled') {
+        this.notify('已取消导入，数据库没有写入任何数据。', 'info', 8000);
+        return null;
+      }
+      if (state.status === 'error') {
+        this.notify(state.error || '导入失败，请查看控制台日志。', 'error', 9000);
+        return null;
+      }
+      return state.summary;
+    },
+
+    async runImport(path, label, token) {
+      const data = await this.runImportJob(path, label, token);
+      if (!data) return null;
       this.unrecognizedDismissed = false;
       await this.reloadBootstrap();
       if (data.batch_id != null) {
@@ -824,6 +906,9 @@ createApp({
         `导入完成：新增 ${data.invoices_imported} 张，` +
         `重复 ${data.invoices_duplicate}，冲突 ${data.invoices_conflict}，` +
         `待确认 ${data.needs_review}，合计 ¥${data.amount}。`;
+      if (data.cancelled) {
+        message += '已提前停止补识别。';
+      }
       if (data.reparsed) {
         message += `已自动补识别旧记录 ${data.reparsed} 张。`;
       }
@@ -838,18 +923,57 @@ createApp({
         this.notify('请先选择发票文件夹。', 'error');
         return;
       }
-      this.busy = '正在导入发票，请稍候…';
+      this.busy = '正在预检文件夹…';
       try {
-        const data = await this.runImport(
+        const plan = await this.call(
+          'import_preflight',
           this.importForm.path,
           this.importForm.label
         );
+        if (!plan.new_files && !plan.reparse_candidates) {
+          this.notify(
+            '没有新发票，也没有可补识别的旧记录；源文件不会被修改。',
+            'info',
+            8000
+          );
+          return;
+        }
+        this.importPlan = plan;
+      } catch (error) {
+        /* surfaced already */
+      } finally {
+        this.busy = '';
+      }
+    },
+
+    async confirmImport() {
+      const plan = this.importPlan;
+      if (!plan) return;
+      this.busy = '正在导入发票…';
+      try {
+        const data = await this.runImport(
+          this.importForm.path,
+          this.importForm.label,
+          plan.token
+        );
+        if (!data) return;
         this.showImportModal = false;
         this.notify(this.importMessage(data), 'success', 10000);
       } catch (error) {
         /* surfaced already */
       } finally {
+        this.importPlan = null;
         this.busy = '';
+      }
+    },
+
+    async cancelImport() {
+      if (this.importProgress.cancelling) return;
+      this.importProgress = { ...this.importProgress, cancelling: true };
+      try {
+        await this.silentCall('cancel_import');
+      } catch (error) {
+        /* surfaced already */
       }
     },
 
@@ -935,6 +1059,7 @@ createApp({
       this.busy = '正在导入发票，请稍候…';
       try {
         const data = await this.runImport(this.wizard.folder, this.wizard.label);
+        if (!data) return;
         this.wizard.importResult = data;
         this.wizard.batchId = data.batch_id;
         if (!this.wizard.reportForm.month) {

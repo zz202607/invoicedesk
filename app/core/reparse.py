@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +23,9 @@ from app.core.text import normalize
 
 TARGET_TYPES = ("scanned", "unknown", "error")
 
+# progress(stage, done, total, current_name)
+ProgressFn = Callable[[str, int, int, str], None]
+
 
 @dataclass(frozen=True)
 class ReparseResult:
@@ -30,6 +35,7 @@ class ReparseResult:
     skipped_edited: int
     skipped_missing: int
     conflicts: int
+    cancelled: bool = False
 
 
 def _usable(invoice: ParsedInvoice) -> bool:
@@ -71,6 +77,8 @@ def reparse_unrecognized(
     connection: sqlite3.Connection,
     *,
     invoice_ids: list[int] | None = None,
+    progress: ProgressFn | None = None,
+    cancel: threading.Event | None = None,
 ) -> ReparseResult:
     """Retry OCR for unrecognized invoices and update them in place.
 
@@ -108,9 +116,22 @@ def reparse_unrecognized(
     rules = learning.seller_rules(connection)
     parsed_cache: dict[str, list[ParsedInvoice]] = {}
     reparsed = failed = skipped_edited = skipped_missing = conflicts = 0
+    cancelled = False
 
     with connection:
-        for row in rows:
+        for index, row in enumerate(rows):
+            if progress is not None:
+                progress(
+                    "reparse",
+                    index,
+                    len(rows),
+                    Path(row["source_path"]).name,
+                )
+            # Rows updated before the cancel are already committed one by one;
+            # stopping here keeps what was recovered instead of rolling it back.
+            if cancel is not None and cancel.is_set():
+                cancelled = True
+                break
             invoice_id = row["id"]
             if invoice_id in edited:
                 skipped_edited += 1
@@ -186,6 +207,8 @@ def reparse_unrecognized(
             if rule_key:
                 learning.record_hit(connection, rule_key)
             reparsed += 1
+        if not cancelled and progress is not None:
+            progress("reparse", len(rows), len(rows), "")
 
     return ReparseResult(
         candidates=len(rows),
@@ -194,4 +217,5 @@ def reparse_unrecognized(
         skipped_edited=skipped_edited,
         skipped_missing=skipped_missing,
         conflicts=conflicts,
+        cancelled=cancelled,
     )

@@ -7,6 +7,7 @@ import json
 import sqlite3
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from decimal import Decimal
@@ -1039,6 +1040,86 @@ def test_import_folder_reports_auto_reparse_fields(api: Api, tmp_path) -> None:
     assert data["reparse_candidates"] == 0
     assert data["reparsed"] == 0
     assert data["reparse_failed"] == 0
+
+
+def _wait_import(api: Api, job_id: str, timeout: float = 10.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = api.import_status(job_id)["data"]
+        if state["status"] != "running":
+            return state
+        time.sleep(0.02)
+    raise AssertionError("import job did not finish in time")
+
+
+def test_import_preflight_and_background_job(api: Api, tmp_path: Path) -> None:
+    folder = tmp_path / "october"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    planned = api.import_preflight(str(folder))
+    assert planned["ok"] is True, planned
+    plan = planned["data"]
+    assert plan["label"] == "october"
+    assert plan["new_files"] == 1
+    assert plan["duplicate_files"] == 0
+    assert plan["ocr_pages"] == 0
+    assert plan["reparse_candidates"] == 0
+    # Preflight reads files but writes nothing.
+    connection = db.connect(tmp_path / "workbench.db")
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM invoices").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM batches").fetchone()[0] == 0
+    finally:
+        connection.close()
+
+    started = api.import_start("", "", plan["token"])
+    assert started["ok"] is True, started
+    state = _wait_import(api, started["data"]["job_id"])
+    assert state["status"] == "done", state
+    assert state["summary"]["invoices_imported"] == 1
+    assert state["summary"]["cancelled"] is False
+    assert api.import_status("stale-job")["data"]["status"] == "idle"
+
+    # The plan token is single use; without a path the start must ask for a
+    # fresh preflight instead of silently importing the cached folder again.
+    again = api.import_start("", "", plan["token"])
+    assert again["ok"] is False
+    assert "预检" in again["error"]
+
+
+def test_import_cancel_rolls_back_and_is_reported(
+    api: Api, tmp_path: Path, monkeypatch
+) -> None:
+    folder = tmp_path / "october"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    def slow_execute(connection, plan, *, progress=None, cancel=None):
+        while not cancel.is_set():
+            time.sleep(0.01)
+        raise api_module.importer.ImportCancelled("cancelled")
+
+    monkeypatch.setattr(api_module.importer, "execute_plan", slow_execute)
+
+    started = api.import_start(str(folder))
+    assert started["ok"] is True, started
+    job_id = started["data"]["job_id"]
+
+    second = api.import_start(str(folder))
+    assert second["ok"] is False
+    assert "正在进行" in second["error"]
+
+    cancelled = api.cancel_import(job_id)
+    assert cancelled["data"]["cancelling"] is True
+    state = _wait_import(api, job_id, timeout=5)
+    assert state["status"] == "cancelled"
+
+    connection = db.connect(tmp_path / "workbench.db")
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM invoices").fetchone()[0] == 0
+    finally:
+        connection.close()
 
 
 def _learn_rule(api: Api, invoice_id: int, category: str = "餐饮费") -> dict:

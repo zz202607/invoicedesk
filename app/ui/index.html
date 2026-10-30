@@ -490,6 +490,16 @@
     <div v-if="busy" class="busy-overlay">
       <div class="spinner"></div>
       <div>{{ busy }}</div>
+      <div v-if="importProgress.active" class="import-progress">
+        <div class="progress-track">
+          <div class="progress-fill" :style="{ width: importPercent + '%' }"></div>
+        </div>
+        <div class="muted">{{ importStageText }}</div>
+        <div v-if="importProgress.name" class="muted progress-name">{{ importProgress.name }}</div>
+        <button class="btn" :disabled="importProgress.cancelling" @click="cancelImport">
+          {{ importProgress.cancelling ? '正在取消…' : '取消导入' }}
+        </button>
+      </div>
     </div>
 
     <div v-if="toast.message" class="toast" :class="toast.kind">{{ toast.message }}</div>
@@ -813,42 +823,65 @@
     <!-- Import modal -->
     <div v-if="showImportModal" class="modal-backdrop" @click.self="showImportModal = false">
       <div class="modal">
-        <h2>导入发票</h2>
-        <p class="muted">
-          选择包含 PDF 发票的文件夹。已导入的文件会按内容自动跳过，源文件不会被修改。<br>
-          旧版导入的扫描件如果还没识别，再次导入同一文件夹会自动补识别，不用手动处理。<br>
-          也可以直接粘贴路径：在资源管理器里选中文件夹，按 Shift + 右键 →「复制为路径」。<br>
-          图片/扫描发票会用本机 OCR 识别，张数多时可能需要几分钟，请耐心等待。
-        </p>
-        <div class="form-grid">
-          <label class="wide">文件夹路径 *
-            <div class="folder-input">
-              <input v-model.trim="importForm.path" placeholder="D:\发票\2026-07">
-              <button class="btn" type="button" :disabled="pickingFolder" @click="pickFolder">
-                {{ pickingFolder ? '选择中…' : '浏览…' }}
-              </button>
-            </div>
-          </label>
-          <label class="wide">批次名称<input v-model.trim="importForm.label" placeholder="可选，默认用文件夹名"></label>
-        </div>
-        <div v-if="boot.recent_import_paths.length" class="recent-paths">
-          <div class="recent-title">最近用过的文件夹（点击填入）</div>
-          <button
-            v-for="path in boot.recent_import_paths.slice(0, 6)"
-            :key="path"
-            type="button"
-            class="recent-path"
-            :class="{ active: importForm.path === path }"
-            :title="path"
-            @click="importForm.path = path"
-          >
-            <b>{{ folderName(path) }}</b><span>{{ path }}</span>
-          </button>
-        </div>
-        <div class="modal-actions">
-          <button class="btn" @click="showImportModal = false">取消</button>
-          <button class="btn primary" :disabled="!!busy || !importForm.path" @click="submitImport">开始导入</button>
-        </div>
+        <template v-if="importPlan">
+          <h2>确认导入</h2>
+          <p>
+            <b>「{{ importPlan.label }}」</b>：将导入 <b>{{ importPlan.new_files }}</b> 张新发票，
+            自动跳过重复 <b>{{ importPlan.duplicate_files }}</b> 张。
+          </p>
+          <p v-if="importPlan.ocr_pages">
+            其中约 <b>{{ importPlan.ocr_pages }}</b> 页没有文本层，将用本机 OCR 识别，可能需要几分钟。
+          </p>
+          <p v-if="importPlan.reparse_candidates">
+            另有 <b>{{ importPlan.reparse_candidates }}</b> 张旧扫描记录会自动补识别。
+          </p>
+          <p class="muted">
+            导入开始时才写入数据库；过程中可随时取消，取消后本次不会留下任何数据。
+            源文件只读，不会被修改。
+          </p>
+          <div class="modal-actions">
+            <button class="btn" :disabled="!!busy" @click="resetImportPlan">返回</button>
+            <button class="btn primary" :disabled="!!busy" @click="confirmImport">确认导入</button>
+          </div>
+        </template>
+        <template v-else>
+          <h2>导入发票</h2>
+          <p class="muted">
+            选择包含 PDF 发票的文件夹。已导入的文件会按内容自动跳过，源文件不会被修改。<br>
+            旧版导入的扫描件如果还没识别，再次导入同一文件夹会自动补识别，不用手动处理。<br>
+            也可以直接粘贴路径：在资源管理器里选中文件夹，按 Shift + 右键 →「复制为路径」。<br>
+            图片/扫描发票会用本机 OCR 识别，张数多时可能需要几分钟，请耐心等待。
+          </p>
+          <div class="form-grid">
+            <label class="wide">文件夹路径 *
+              <div class="folder-input">
+                <input v-model.trim="importForm.path" placeholder="D:\发票\2026-07">
+                <button class="btn" type="button" :disabled="pickingFolder" @click="pickFolder">
+                  {{ pickingFolder ? '选择中…' : '浏览…' }}
+                </button>
+              </div>
+            </label>
+            <label class="wide">批次名称<input v-model.trim="importForm.label" placeholder="可选，默认用文件夹名"></label>
+          </div>
+          <div v-if="boot.recent_import_paths.length" class="recent-paths">
+            <div class="recent-title">最近用过的文件夹（点击填入）</div>
+            <button
+              v-for="path in boot.recent_import_paths.slice(0, 6)"
+              :key="path"
+              type="button"
+              class="recent-path"
+              :class="{ active: importForm.path === path }"
+              :title="path"
+              @click="importForm.path = path"
+            >
+              <b>{{ folderName(path) }}</b><span>{{ path }}</span>
+            </button>
+          </div>
+          <div class="modal-actions">
+            <button class="btn" @click="showImportModal = false">取消</button>
+            <button class="btn primary" :disabled="!!busy || !importForm.path" @click="submitImport">开始导入</button>
+          </div>
+        </template>
       </div>
     </div>
 

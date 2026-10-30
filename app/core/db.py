@@ -196,6 +196,9 @@ def connect(path: str | Path, *, allow_unsafe_path: bool = False) -> sqlite3.Con
     connection = sqlite3.connect(str(db_path))
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
+    # A background import keeps one write transaction open for its whole run;
+    # short reads and status polls should wait for it instead of failing.
+    connection.execute("PRAGMA busy_timeout = 5000")
     try:
         init_db(connection)
     except Exception:

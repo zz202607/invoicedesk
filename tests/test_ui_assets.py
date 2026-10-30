@@ -311,3 +311,23 @@ def test_duplicate_conflict_review_is_wired_to_the_bridge() -> None:
         assert method in script
     assert "openConflictModal" in script
     assert "conflictKeep" in script
+
+
+def test_import_preflight_progress_and_cancel_are_wired_to_the_bridge() -> None:
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    # Preflight must report counts and ask for confirmation before writing.
+    assert "确认导入" in html
+    assert "另有" in html
+    assert "import_preflight" in script
+    assert "this.importPlan = plan" in script
+    assert "plan.token" in script
+    assert "正在预检" in script
+    # Long imports must show a progress bar and stay cancellable.
+    assert "progress-fill" in html
+    assert "取消导入" in html
+    assert "importPercent" in script
+    for bridge in ("import_start", "import_status", "cancel_import"):
+        assert bridge in script, bridge
+    # A cancelled parse is reported as an untouched database.
+    assert "数据库没有写入任何数据" in script
