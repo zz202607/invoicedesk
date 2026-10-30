@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 from decimal import Decimal
 from pathlib import Path
 
@@ -527,5 +528,120 @@ def test_label_override_is_used(tmp_path: Path) -> None:
         summary = import_folder(connection, folder, label="7月示例甲")
         assert summary.label == "7月示例甲"
         assert connection.execute("SELECT label FROM batches").fetchone()[0] == "7月示例甲"
+    finally:
+        connection.close()
+
+
+def test_preflight_reports_counts_without_writing(tmp_path: Path) -> None:
+    folder = tmp_path / "2026-07"
+    write_invoice(folder, "a.pdf", number="26502000000000000041")
+    write_invoice(folder, "b.pdf", number="26502000000000000042")
+
+    connection = db.connect(tmp_path / "invoices.db")
+    try:
+        plan = importer.plan_import(connection, folder)
+
+        assert plan.label == "2026-07"
+        assert plan.files_seen == 2
+        assert plan.new_files == 2
+        assert plan.duplicate_files == 0
+        assert plan.ocr_pages == 0
+        assert plan.reparse_candidates == 0
+        assert connection.execute("SELECT COUNT(*) FROM invoices").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM batches").fetchone()[0] == 0
+
+        # The plan carries digests, so executing it imports the same files.
+        summary = importer.execute_plan(connection, plan)
+        assert summary.files_imported == 2
+        assert summary.invoices_imported == 2
+        assert summary.cancelled is False
+    finally:
+        connection.close()
+
+
+def test_preflight_counts_pages_without_a_text_layer(tmp_path: Path) -> None:
+    folder = tmp_path / "mixed"
+    write_invoice(folder, "digital.pdf")
+    blank_pdf(folder / "scan.pdf")
+
+    connection = db.connect(tmp_path / "invoices.db")
+    try:
+        assert importer.plan_import(connection, folder).ocr_pages == 1
+        # The import path skips the estimate; only preflight pays for it.
+        assert importer.plan_import(
+            connection, folder, estimate_ocr=False
+        ).ocr_pages == 0
+    finally:
+        connection.close()
+
+
+def test_preflight_finds_duplicates_and_old_scanned_rows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("app.core.ocr.is_available", lambda: True)
+    folder = tmp_path / "october"
+    write_invoice(folder, "a.pdf")
+
+    connection = db.connect(tmp_path / "invoices.db")
+    try:
+        import_folder(connection, folder)
+        connection.execute(
+            "UPDATE invoices SET invoice_type = 'scanned', invoice_number = ''"
+        )
+        connection.commit()
+
+        plan = importer.plan_import(connection, folder)
+        assert plan.new_files == 0
+        assert plan.duplicate_files == 1
+        assert plan.reparse_candidates == 1
+    finally:
+        connection.close()
+
+
+def test_cancel_mid_import_rolls_back_everything(tmp_path: Path) -> None:
+    folder = tmp_path / "batch"
+    write_invoice(folder, "a.pdf", number="26502000000000000051")
+    write_invoice(folder, "b.pdf", number="26502000000000000052")
+
+    connection = db.connect(tmp_path / "invoices.db")
+    try:
+        cancel = threading.Event()
+
+        def progress(stage: str, done: int, total: int, name: str) -> None:
+            if stage == "parse" and done >= 1:
+                cancel.set()
+
+        with pytest.raises(importer.ImportCancelled):
+            import_folder(connection, folder, progress=progress, cancel=cancel)
+
+        for table in ("batches", "files", "invoices"):
+            count = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            assert count == 0, table
+    finally:
+        connection.close()
+
+
+def test_cancel_stops_the_automatic_reparse(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("app.core.ocr.is_available", lambda: True)
+    folder = tmp_path / "october"
+    write_invoice(folder, "a.pdf")
+
+    connection = db.connect(tmp_path / "invoices.db")
+    try:
+        import_folder(connection, folder)
+        connection.execute(
+            "UPDATE invoices SET invoice_type = 'scanned', invoice_number = ''"
+        )
+        connection.commit()
+
+        cancel = threading.Event()
+        cancel.set()
+        summary = import_folder(connection, folder, cancel=cancel)
+
+        assert summary.batch_id is None
+        assert summary.cancelled is True
+        assert summary.reparsed == 0
+        row = connection.execute("SELECT invoice_type FROM invoices").fetchone()
+        assert row["invoice_type"] == "scanned"
     finally:
         connection.close()

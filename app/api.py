@@ -14,6 +14,7 @@ import os
 import sqlite3
 import sys
 import threading
+import time
 from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
@@ -54,6 +55,54 @@ LAYOUT_LABELS = {
     "plain": "无项目/公司列",
 }
 PREVIEW_CACHE_SIZE = 8
+# A preflight plan is only valid for a short while: the user may pick another
+# folder or leave the dialog open, and a stale plan must not drive an import.
+IMPORT_PLAN_TTL = 15 * 60
+
+
+class _ImportJob:
+    """In-memory state for a background import, read by the polling UI."""
+
+    def __init__(self, job_id: str) -> None:
+        self.job_id = job_id
+        self.cancel = threading.Event()
+        self._lock = threading.Lock()
+        self._state: dict[str, Any] = {
+            "status": "running",
+            "stage": "parse",
+            "done": 0,
+            "total": 0,
+            "name": "",
+            "summary": None,
+            "error": "",
+        }
+
+    @property
+    def running(self) -> bool:
+        with self._lock:
+            return self._state["status"] == "running"
+
+    def progress(self, stage: str, done: int, total: int, name: str) -> None:
+        with self._lock:
+            self._state.update(stage=stage, done=done, total=total, name=name)
+
+    def finish(
+        self,
+        status: str,
+        *,
+        summary: dict[str, Any] | None = None,
+        error: str = "",
+    ) -> None:
+        with self._lock:
+            self._state.update(
+                status=status, summary=summary, error=error, name=""
+            )
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            data = dict(self._state)
+        data["job_id"] = self.job_id
+        return data
 
 
 def _money(cents: int | None) -> str:
@@ -395,6 +444,8 @@ class Api:
         self._folder_dialog = folder_dialog
         self._preview_cache: dict[tuple[int, float], str] = {}
         self._lock = threading.RLock()
+        self._import_plan: tuple[str, float, importer.ImportPlan] | None = None
+        self._import_job: _ImportJob | None = None
 
     def _connect(self) -> sqlite3.Connection:
         return db.connect(self._db_path)
@@ -1107,28 +1158,13 @@ class Api:
                 db.remember_import_path(connection, path)
         return {"path": path or None}
 
-    @_endpoint
-    def import_folder(self, path: str, label: str = "") -> dict[str, Any]:
+    def _import_source(self, path: str) -> Path:
         source = Path(str(path)).expanduser()
         if not source.exists():
             raise ReportError(f"路径不存在：{source}")
-        with contextlib.closing(self._connect()) as connection:
-            summary = importer.import_folder(
-                connection, source, label=(label.strip() or None)
-            )
-            with connection:
-                remembered = source.parent if source.is_file() else source
-                db.remember_import_path(connection, str(remembered.resolve()))
-        if summary.files_imported:
-            # A snapshot after every import makes a bad batch or a mistaken
-            # confirmation cheap to undo. A failed backup never fails the import.
-            try:
-                backup.create_backup(self._db_path, reason="import")
-            except (OSError, backup.BackupError) as exc:
-                print(
-                    f"[api] import backup skipped: {redact_paths(str(exc))}",
-                    file=sys.stderr,
-                )
+        return source
+
+    def _summary_dict(self, summary: importer.ImportSummary) -> dict[str, Any]:
         return {
             "batch_id": summary.batch_id,
             "label": summary.label,
@@ -1143,5 +1179,154 @@ class Api:
             "reparse_candidates": summary.reparse_candidates,
             "reparsed": summary.reparsed,
             "reparse_failed": summary.reparse_failed,
+            "cancelled": summary.cancelled,
         }
+
+    def _import_backup(self) -> None:
+        """A snapshot after every import makes a bad batch cheap to undo."""
+        try:
+            backup.create_backup(self._db_path, reason="import")
+        except (OSError, backup.BackupError) as exc:
+            # A failed backup never fails an import that already committed.
+            print(
+                f"[api] import backup skipped: {redact_paths(str(exc))}",
+                file=sys.stderr,
+            )
+
+    def _take_import_plan(
+        self, token: str, path: str, label: str
+    ) -> importer.ImportPlan:
+        """Use the preflight plan if it is still valid, else plan again."""
+        cached = self._import_plan
+        if token and cached and cached[0] == token:
+            self._import_plan = None
+            if time.monotonic() - cached[1] <= IMPORT_PLAN_TTL:
+                return cached[2]
+        if not str(path or "").strip():
+            raise ReportError("导入预检已过期，请重新预检。")
+        source = self._import_source(path)
+        with contextlib.closing(self._connect()) as connection:
+            # The OCR estimate only feeds the confirmation dialog; a direct
+            # start (the wizard) does not need to open every PDF for it.
+            return importer.plan_import(
+                connection,
+                source,
+                label=(label.strip() or None),
+                estimate_ocr=False,
+            )
+
+    def _run_import_job(self, job: _ImportJob, plan: importer.ImportPlan) -> None:
+        """Background worker: import under its own connection, report progress."""
+        try:
+            with contextlib.closing(self._connect()) as connection:
+                summary = importer.execute_plan(
+                    connection, plan, progress=job.progress, cancel=job.cancel
+                )
+                try:
+                    with connection:
+                        db.remember_import_path(connection, plan.source_dir)
+                except Exception as exc:  # noqa: BLE001 - the import already committed
+                    print(
+                        f"[api] import path not remembered: {redact_paths(str(exc))}",
+                        file=sys.stderr,
+                    )
+        except importer.ImportCancelled:
+            job.finish("cancelled")
+            return
+        except Exception as exc:  # noqa: BLE001 - the polling UI reads the state
+            print(
+                f"[api] import {type(exc).__name__}: {redact_paths(str(exc))}",
+                file=sys.stderr,
+            )
+            job.finish("error", error="导入失败，请查看控制台日志。")
+            return
+        if summary.files_imported:
+            self._import_backup()
+        job.finish("done", summary=self._summary_dict(summary))
+
+    @_endpoint
+    def import_preflight(self, path: str, label: str = "") -> dict[str, Any]:
+        """Report what an import would do before any row is written.
+
+        Scanning and hashing still read every file, but nothing is inserted.
+        The returned token lets ``import_start`` reuse the plan instead of
+        hashing the folder a second time.
+        """
+        source = self._import_source(path)
+        with contextlib.closing(self._connect()) as connection:
+            plan = importer.plan_import(
+                connection, source, label=(label.strip() or None)
+            )
+        token = uuid4().hex
+        self._import_plan = (token, time.monotonic(), plan)
+        return {
+            "token": token,
+            "label": plan.label,
+            "files_seen": plan.files_seen,
+            "new_files": plan.new_files,
+            "duplicate_files": plan.duplicate_files,
+            "ocr_pages": plan.ocr_pages,
+            "reparse_candidates": plan.reparse_candidates,
+        }
+
+    @_endpoint
+    def import_start(
+        self, path: str = "", label: str = "", token: str = ""
+    ) -> dict[str, Any]:
+        """Start a background import; poll ``import_status`` for progress."""
+        job = self._import_job
+        if job is not None and job.running:
+            raise ReportError("已有导入正在进行，请等待完成或先取消。")
+        plan = self._take_import_plan(str(token or "").strip(), path, label)
+        job = _ImportJob(uuid4().hex)
+        job.progress("parse", 0, plan.new_files, "")
+        self._import_job = job
+        thread = threading.Thread(
+            target=self._run_import_job,
+            args=(job, plan),
+            name="invoicedesk-import",
+            daemon=True,
+        )
+        thread.start()
+        return {
+            "job_id": job.job_id,
+            "label": plan.label,
+            "total": plan.new_files,
+        }
+
+    @_endpoint
+    def import_status(self, job_id: str = "") -> dict[str, Any]:
+        job = self._import_job
+        if job is None or (job_id and job_id != job.job_id):
+            return {"status": "idle"}
+        return job.snapshot()
+
+    @_endpoint
+    def cancel_import(self, job_id: str = "") -> dict[str, Any]:
+        """Ask the running import to stop; it stops between files."""
+        job = self._import_job
+        if job is None or not job.running:
+            return {"cancelling": False}
+        if job_id and job_id != job.job_id:
+            return {"cancelling": False}
+        job.cancel.set()
+        return {"cancelling": True}
+
+    @_endpoint
+    def import_folder(self, path: str, label: str = "") -> dict[str, Any]:
+        """Synchronous import kept for the CLI tests and older callers."""
+        job = self._import_job
+        if job is not None and job.running:
+            raise ReportError("已有导入正在进行，请等待完成或先取消。")
+        source = self._import_source(path)
+        with contextlib.closing(self._connect()) as connection:
+            summary = importer.import_folder(
+                connection, source, label=(label.strip() or None)
+            )
+            with connection:
+                remembered = source.parent if source.is_file() else source
+                db.remember_import_path(connection, str(remembered.resolve()))
+        if summary.files_imported:
+            self._import_backup()
+        return self._summary_dict(summary)
 
