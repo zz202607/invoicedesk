@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from app.api import Api
-from app.core import logs, runtime
+from app.core import appconfig, logs, runtime
 from app.core.paths import repo_root
 
 
@@ -46,6 +46,8 @@ def _dev_mode(monkeypatch) -> None:
     monkeypatch.delenv(runtime.HOME_ENV, raising=False)
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
     monkeypatch.delenv("APPDATA", raising=False)
+    # A developer's real data/config.json must not leak into these defaults.
+    monkeypatch.setattr(appconfig, "load", dict)
 
 
 def test_source_checkout_keeps_repo_relative_defaults(monkeypatch) -> None:
@@ -77,6 +79,40 @@ def test_home_override_wins_in_source_checkout(monkeypatch, tmp_path) -> None:
     assert runtime.app_home() == custom
     assert runtime.default_db_path() == custom / "invoicedesk.db"
     assert runtime.default_out_dir() == custom / "out"
+
+
+def test_configured_data_dir_moves_every_default(monkeypatch, tmp_path) -> None:
+    _dev_mode(monkeypatch)
+    monkeypatch.setattr(appconfig, "load", lambda: {"data_dir": str(tmp_path)})
+    assert runtime.default_db_path() == tmp_path / "invoicedesk.db"
+    assert runtime.default_out_dir() == tmp_path / "out"
+    assert runtime.log_file() == tmp_path / "logs" / "invoicedesk.log"
+
+
+def test_configured_data_dir_wins_over_the_home_override(
+    monkeypatch, tmp_path
+) -> None:
+    _dev_mode(monkeypatch)
+    monkeypatch.setenv(runtime.HOME_ENV, str(tmp_path / "home"))
+    monkeypatch.setattr(
+        appconfig, "load", lambda: {"data_dir": str(tmp_path / "chosen")}
+    )
+    assert runtime.default_db_path() == tmp_path / "chosen" / "invoicedesk.db"
+
+
+def test_relative_configured_data_dir_is_ignored(monkeypatch) -> None:
+    _dev_mode(monkeypatch)
+    monkeypatch.setattr(appconfig, "load", lambda: {"data_dir": "custom"})
+    assert runtime.default_db_path() == Path("data") / "invoicedesk.db"
+    assert runtime.default_out_dir() == Path("out")
+
+
+def test_suggested_data_dir_is_local(monkeypatch, tmp_path) -> None:
+    _dev_mode(monkeypatch)
+    assert runtime.suggested_data_dir() == repo_root() / "data"
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    assert runtime.suggested_data_dir() == tmp_path / runtime.APP_DIR_NAME
 
 
 def test_api_defaults_follow_runtime(monkeypatch, tmp_path) -> None:

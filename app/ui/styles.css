@@ -1297,6 +1297,77 @@ input[type="checkbox"] {
   margin-top: 16px;
 }
 
+.welcome-modal {
+  width: min(600px, 100%);
+}
+
+.welcome-skip {
+  margin-right: auto;
+}
+
+.welcome-steps {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.welcome-steps span {
+  width: 26px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+
+.welcome-steps span.active {
+  background: var(--accent);
+}
+
+.welcome-steps span.done {
+  background: var(--accent-weak);
+}
+
+.welcome-points {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.welcome-points li {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+
+.welcome-points b {
+  font-size: 13px;
+}
+
+.welcome-points span {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.welcome-path {
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 12px;
+  word-break: break-all;
+  user-select: all;
+}
+
+.welcome-found {
+  color: var(--ok);
+}
+
 .rules-modal {
   width: min(860px, 100%);
 }

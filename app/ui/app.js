@@ -16,6 +16,9 @@ createApp({
         report_choices: { company: [], department: [], reporter: [] },
         recent_import_paths: [],
         unrecognized_count: 0,
+        first_run: false,
+        data_dir: '',
+        suggested_data_dir: '',
       },
       loading: true,
       fatal: '',
@@ -150,6 +153,20 @@ createApp({
       conflictGroups: [],
       conflictArchived: [],
       conflictKeep: {},
+      showWelcome: false,
+      welcomeFirstRun: false,
+      welcomeGuideOnly: false,
+      welcomeStep: 1,
+      welcomeBusy: false,
+      welcomeChecked: false,
+      welcomeForm: { data_dir: '' },
+      welcomeCheck: {
+        path: '',
+        exists: false,
+        has_database: false,
+        invoice_count: 0,
+        batch_count: 0,
+      },
       showDashboardModal: false,
       dashboardLoading: false,
       dashboard: null,
@@ -222,6 +239,7 @@ createApp({
     },
     modalOpen() {
       return (
+        this.showWelcome ||
         this.showReportModal ||
         this.showMileageModal ||
         this.showRulesModal ||
@@ -249,6 +267,11 @@ createApp({
         dark: '深色',
       };
       return labels[this.themeMode] || '自动';
+    },
+    welcomeSteps() {
+      // The data-folder step only exists on the real first run; the guide
+      // reopened from the menu explains importing without touching paths.
+      return this.welcomeFirstRun && !this.welcomeGuideOnly ? [1, 2, 3] : [1, 3];
     },
     categoryChoices() {
       const names = [];
@@ -344,6 +367,10 @@ createApp({
 
     onKeydown(event) {
       if (event.key === 'Escape') {
+        if (this.showWelcome) {
+          this.closeWelcome();
+          return;
+        }
         if (this.exportMenuOpen || this.moreMenuOpen) {
           this.exportMenuOpen = false;
           this.moreMenuOpen = false;
@@ -496,6 +523,7 @@ createApp({
         this.currentReportId = this.reports.length ? this.reports[0].id : '';
         await this.loadReport();
         await this.refreshInvoices(true);
+        if (this.boot.first_run) this.startWelcome();
       } catch (error) {
         this.fatal = error.message || String(error);
       } finally {
@@ -796,6 +824,136 @@ createApp({
         /* surfaced already */
       } finally {
         this.busy = '';
+      }
+    },
+
+    /* ------------------------------------------------------------ setup */
+
+    startWelcome() {
+      this.welcomeFirstRun = true;
+      this.welcomeGuideOnly = false;
+      this.welcomeStep = 1;
+      this.welcomeForm = { data_dir: this.boot.data_dir || '' };
+      this.welcomeChecked = false;
+      this.welcomeCheck = {
+        path: this.boot.data_dir || '',
+        exists: true,
+        has_database: false,
+        invoice_count: 0,
+        batch_count: 0,
+      };
+      this.showWelcome = true;
+    },
+
+    openWelcomeFromMenu() {
+      this.moreMenuOpen = false;
+      this.welcomeFirstRun = false;
+      this.welcomeGuideOnly = true;
+      this.welcomeStep = 1;
+      this.welcomeForm = { data_dir: this.boot.data_dir || '' };
+      this.showWelcome = true;
+    },
+
+    closeWelcome() {
+      // On the true first run the wizard ends by finishing or skipping, so an
+      // accidental backdrop click or Esc never hides the setup silently.
+      if (!this.welcomeFirstRun) this.showWelcome = false;
+    },
+
+    async welcomeNext() {
+      if (this.welcomeStep !== 1) return;
+      if (this.welcomeFirstRun && !this.welcomeGuideOnly) {
+        this.welcomeStep = 2;
+        await this.welcomeInspect();
+      } else {
+        this.welcomeStep = 3;
+      }
+    },
+
+    welcomeBack() {
+      if (this.welcomeStep === 3 && this.welcomeFirstRun && !this.welcomeGuideOnly) {
+        this.welcomeStep = 2;
+      } else {
+        this.welcomeStep = 1;
+      }
+    },
+
+    async welcomeInspect() {
+      const path = (this.welcomeForm.data_dir || '').trim();
+      if (!path) {
+        this.welcomeChecked = false;
+        return;
+      }
+      try {
+        const data = await this.silentCall('inspect_data_dir', path);
+        this.welcomeCheck = data;
+        this.welcomeForm.data_dir = data.path || path;
+        this.welcomeChecked = true;
+      } catch (error) {
+        this.welcomeChecked = false;
+        this.notify(error.message, 'error');
+      }
+    },
+
+    async welcomePickDir() {
+      if (this.welcomeBusy) return;
+      this.welcomeBusy = true;
+      try {
+        // remember=false: a data folder is not a recent invoice folder.
+        const data = await this.call(
+          'pick_folder',
+          this.welcomeForm.data_dir || '',
+          false
+        );
+        if (data && data.path) {
+          this.welcomeForm.data_dir = data.path;
+          await this.welcomeInspect();
+        }
+      } catch (error) {
+        /* call() already surfaced the message */
+      } finally {
+        this.welcomeBusy = false;
+      }
+    },
+
+    async welcomeUseDir() {
+      if (this.welcomeBusy) return;
+      this.welcomeBusy = true;
+      try {
+        const data = await this.call('select_data_dir', this.welcomeForm.data_dir);
+        this.welcomeCheck = { ...this.welcomeCheck, ...data };
+        this.notify(
+          data.has_database
+            ? `已使用现有发票库：${data.data_dir}`
+            : `发票库将保存在：${data.data_dir}`,
+          'success',
+          6000
+        );
+        await this.reloadBootstrap();
+        await this.loadReport();
+        await this.refreshInvoices(true);
+        this.welcomeStep = 3;
+      } catch (error) {
+        /* surfaced already */
+      } finally {
+        this.welcomeBusy = false;
+      }
+    },
+
+    async welcomeFinish(openImport) {
+      if (this.welcomeBusy) return;
+      this.welcomeBusy = true;
+      try {
+        await this.call('complete_welcome');
+        this.showWelcome = false;
+        this.welcomeFirstRun = false;
+        this.welcomeGuideOnly = false;
+        if (openImport) this.openImportModal();
+        else this.notify('准备好了，随时点「导入发票」。', 'success');
+      } catch (error) {
+        /* surfaced already */
+      } finally {
+        this.welcomeBusy = false;
       }
     },
 

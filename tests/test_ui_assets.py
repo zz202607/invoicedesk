@@ -331,3 +331,24 @@ def test_import_preflight_progress_and_cancel_are_wired_to_the_bridge() -> None:
         assert bridge in script, bridge
     # A cancelled parse is reported as an untouched database.
     assert "数据库没有写入任何数据" in script
+
+
+def test_first_run_wizard_is_wired_to_the_bridge() -> None:
+    html = (UI / "index.html").read_text(encoding="utf-8")
+    script = (UI / "app.js").read_text(encoding="utf-8")
+    # The welcome flow explains the privacy guarantees on the first screen.
+    assert "欢迎使用发票管家" in html
+    assert "源发票只读" in html
+    assert "财务数据只在本机" in html
+    # A data folder is chosen and adopted through the bridge.
+    assert "选择数据目录" in html
+    assert "inspect_data_dir" in script
+    assert "select_data_dir" in script
+    assert "complete_welcome" in script
+    assert "startWelcome" in script
+    # The guide can be reopened later from the "更多" menu.
+    assert "首次使用向导" in html
+    assert "openWelcomeFromMenu" in script
+    # The wizard must not let a stray backdrop click hide first-run setup.
+    assert "welcomeFirstRun" in script
+    assert "boot.first_run" in script
