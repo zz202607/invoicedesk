@@ -17,7 +17,7 @@ import pytest
 
 import app.api as api_module
 from app.api import Api, _batch_id, _int_id
-from app.core import db
+from app.core import appconfig, db
 from app.core.models import InvoiceType
 from app.core.paths import output_path_reason
 from app.core.reports import ReportError
@@ -1291,3 +1291,148 @@ def test_bootstrap_falls_back_to_existing_batch_folders(api: Api, tmp_path) -> N
     boot = api.bootstrap()
     assert boot["ok"] is True
     assert boot["data"]["recent_import_paths"] == [str(folder)]
+
+
+# ---------------------------------------------------------------- first run
+
+
+@pytest.fixture
+def app_config(monkeypatch, tmp_path):
+    """Keep the settings file inside the test's tmp folder."""
+    path = tmp_path / "app-home" / "config.json"
+    monkeypatch.setattr(appconfig, "config_path", lambda: path)
+    return path
+
+
+def test_bootstrap_reports_first_run_and_the_data_dir(api: Api, app_config) -> None:
+    data = api.bootstrap()["data"]
+    assert data["first_run"] is True
+    assert data["data_dir"] == str(Path(api._db_path).resolve().parent)
+    assert data["suggested_data_dir"]
+    assert api.complete_welcome() == {"ok": True, "data": {"welcome_done": True}}
+    assert api.bootstrap()["data"]["first_run"] is False
+
+
+def test_first_run_is_false_when_the_pool_already_has_data(api: Api, app_config) -> None:
+    _create_report(api)
+    assert api.bootstrap()["data"]["first_run"] is False
+
+
+def test_inspect_data_dir_handles_new_and_existing_folders(
+    api: Api, tmp_path, app_config
+) -> None:
+    fresh = tmp_path / "新目录"
+    response = api.inspect_data_dir(str(fresh))
+    assert response["ok"] is True, response
+    data = response["data"]
+    assert data["exists"] is False
+    assert data["has_database"] is False
+    assert data["path"] == str(fresh.resolve())
+
+    existing = tmp_path / "旧数据"
+    existing.mkdir()
+    connection = db.connect(existing / "invoicedesk.db")
+    try:
+        add_invoice(connection)
+    finally:
+        connection.close()
+    response = api.inspect_data_dir(str(existing))
+    assert response["ok"] is True, response
+    data = response["data"]
+    assert data["exists"] is True
+    assert data["has_database"] is True
+    assert data["invoice_count"] == 1
+    assert data["batch_count"] == 1
+    assert data["database_version"] == db.DB_VERSION
+
+
+def test_inspect_data_dir_rejects_an_unreadable_database(
+    api: Api, tmp_path, app_config
+) -> None:
+    target = tmp_path / "坏数据"
+    target.mkdir()
+    (target / "invoicedesk.db").write_text("not a database", encoding="utf-8")
+    response = api.inspect_data_dir(str(target))
+    assert response["ok"] is False
+    assert "invoicedesk.db" in response["error"]
+
+
+def test_select_data_dir_moves_an_empty_pool(api: Api, tmp_path, app_config) -> None:
+    target = tmp_path / "发票数据"
+    response = api.select_data_dir(str(target))
+    assert response["ok"] is True, response
+    data = response["data"]
+    assert data["data_dir"] == str(target.resolve())
+    assert data["has_database"] is False
+    assert api._db_path == target.resolve() / "invoicedesk.db"
+    assert api._out_dir == target.resolve() / "out"
+    assert api.bootstrap()["data"]["data_dir"] == str(target.resolve())
+    assert appconfig.data_dir() == target.resolve()
+    # Writes after the switch land in the new database, not the old one.
+    _create_report(api)
+    connection = db.connect(target / "invoicedesk.db")
+    try:
+        count = connection.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
+    finally:
+        connection.close()
+    assert count == 1
+
+
+def test_select_data_dir_refuses_when_the_pool_has_data(
+    api: Api, tmp_path, app_config
+) -> None:
+    _create_report(api)
+    before = api._db_path
+    response = api.select_data_dir(str(tmp_path / "其他目录"))
+    assert response["ok"] is False
+    assert "已有数据" in response["error"]
+    assert api._db_path == before
+
+
+def test_select_data_dir_adopts_an_existing_database(
+    api: Api, tmp_path, app_config
+) -> None:
+    existing = tmp_path / "已有数据"
+    existing.mkdir()
+    connection = db.connect(existing / "invoicedesk.db")
+    try:
+        add_invoice(connection)
+    finally:
+        connection.close()
+    response = api.select_data_dir(str(existing))
+    assert response["ok"] is True, response
+    data = response["data"]
+    assert data["has_database"] is True
+    assert data["invoice_count"] == 1
+    assert data["batch_count"] == 1
+    assert len(api.list_invoices()["data"]["rows"]) == 1
+    assert api.bootstrap()["data"]["first_run"] is False
+
+
+def test_select_data_dir_rejects_relative_and_repo_paths(api: Api, app_config) -> None:
+    relative = api.select_data_dir("发票数据")
+    assert relative["ok"] is False
+    assert "完整路径" in relative["error"]
+    inside_repo = api.select_data_dir(str(ROOT / "app" / "data"))
+    assert inside_repo["ok"] is False
+    assert "仓库" in inside_repo["error"]
+
+
+def test_pick_folder_can_skip_the_recent_import_list(tmp_path) -> None:
+    folder = tmp_path / "数据目录"
+    folder.mkdir()
+    api = _folder_dialog_api(tmp_path, lambda current: str(folder))
+    assert api.pick_folder("", False)["ok"] is True
+    assert api.bootstrap()["data"]["recent_import_paths"] == []
+
+
+def test_inspect_data_dir_treats_an_empty_database_as_new(
+    api: Api, tmp_path, app_config
+) -> None:
+    target = tmp_path / "空库"
+    connection = db.connect(target / "invoicedesk.db")
+    connection.close()
+    data = api.inspect_data_dir(str(target))["data"]
+    assert data["has_database"] is False
+    assert data["invoice_count"] == 0
+    assert data["batch_count"] == 0

@@ -102,6 +102,9 @@
           <button class="menu-row" @click="cycleThemeFromMenu">
             <span>外观：{{ themeLabel }}</span><kbd>Ctrl+Shift+D</kbd>
           </button>
+          <button class="menu-row" @click="openWelcomeFromMenu">
+            <span>首次使用向导</span>
+          </button>
           <button class="menu-row" @click="openShortcutsFromMenu">
             <span>快捷键与帮助</span><kbd>F1</kbd>
           </button>
@@ -880,6 +883,68 @@
           <div class="modal-actions">
             <button class="btn" @click="showImportModal = false">取消</button>
             <button class="btn primary" :disabled="!!busy || !importForm.path" @click="submitImport">开始导入</button>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- First-run wizard: welcome → data folder → import guidance -->
+    <div v-if="showWelcome" class="modal-backdrop" @click.self="closeWelcome">
+      <div class="modal welcome-modal">
+        <div class="welcome-steps" aria-hidden="true">
+          <span
+            v-for="step in welcomeSteps"
+            :key="step"
+            :class="{ active: welcomeStep === step, done: welcomeStep > step }"
+          ></span>
+        </div>
+
+        <template v-if="welcomeStep === 1">
+          <h2>欢迎使用发票管家</h2>
+          <p class="muted">每月报账：导入发票 → 核对 → 分类 → 生成报销单 → 导出，全程在本机完成。</p>
+          <ul class="welcome-points">
+            <li><b>源发票只读</b><span>导入只读取 PDF 和图片，不修改、不删除、不移动原文件。</span></li>
+            <li><b>财务数据只在本机</b><span>发票库和导出文件都保存在本机文件夹，不上传云端。</span></li>
+            <li><b>每张票可追溯</b><span>人工修改逐字段留痕；低置信度结果会显式标为“待确认”。</span></li>
+          </ul>
+          <div class="modal-actions">
+            <button v-if="welcomeFirstRun" class="btn welcome-skip" @click="welcomeFinish(false)">跳过</button>
+            <button v-if="!welcomeFirstRun" class="btn" @click="closeWelcome">关闭</button>
+            <button class="btn primary" @click="welcomeNext">开始</button>
+          </div>
+        </template>
+
+        <template v-else-if="welcomeStep === 2">
+          <h2>选择数据目录</h2>
+          <p class="muted">
+            发票库和自动备份会保存在这个文件夹。请选择本机固定盘，不要用 OneDrive、网盘或网络共享。
+          </p>
+          <div class="welcome-path">{{ welcomeForm.data_dir }}</div>
+          <p v-if="welcomeCheck.has_database" class="welcome-found">
+            已发现发票库：{{ welcomeCheck.invoice_count }} 张发票、{{ welcomeCheck.batch_count }} 个批次，将直接继续使用。
+          </p>
+          <p v-else-if="welcomeChecked" class="muted">这个文件夹还没有发票库，将在这里新建。</p>
+          <p class="muted">已有数据后不能在这里更换目录；重装或换电脑时选择原来的文件夹即可继续使用。</p>
+          <div class="modal-actions">
+            <button class="btn" :disabled="welcomeBusy" @click="welcomeBack">上一步</button>
+            <button class="btn" :disabled="welcomeBusy" @click="welcomePickDir">
+              {{ welcomeBusy ? '处理中…' : '浏览…' }}
+            </button>
+            <button class="btn primary" :disabled="welcomeBusy || !welcomeForm.data_dir" @click="welcomeUseDir">使用此文件夹</button>
+          </div>
+        </template>
+
+        <template v-else>
+          <h2>导入发票</h2>
+          <p class="muted">
+            选择包含 PDF 或图片发票的文件夹。已导入的文件会按内容自动跳过；扫描件和照片会用本机 OCR 识别，约 5 秒一张，不上传。
+          </p>
+          <div class="welcome-path">数据保存在：{{ boot.data_dir || welcomeForm.data_dir }}</div>
+          <p class="muted">源文件只读；导入开始前会先预检，确认后才会写入数据库，过程中可以取消。</p>
+          <div class="modal-actions">
+            <button v-if="welcomeFirstRun" class="btn" :disabled="welcomeBusy" @click="welcomeFinish(false)">稍后自己导入</button>
+            <button v-else class="btn" :disabled="welcomeBusy" @click="closeWelcome">关闭</button>
+            <button class="btn primary" :disabled="welcomeBusy" @click="welcomeFinish(true)">导入发票</button>
           </div>
         </template>
       </div>

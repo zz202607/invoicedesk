@@ -23,6 +23,7 @@ from uuid import uuid4
 
 from app import __version__
 from app.core import (
+    appconfig,
     backup,
     db,
     importer,
@@ -502,6 +503,13 @@ class Api:
             "today": today.isoformat(),
             "default_month": today.strftime("%Y-%m"),
             "db_name": self._db_path.name,
+            "data_dir": str(Path(self._db_path).resolve().parent),
+            "suggested_data_dir": str(runtime.suggested_data_dir()),
+            # The wizard can only change the data folder while nothing has
+            # been written, so an upgrade never hides an existing pool.
+            "first_run": (
+                not appconfig.welcome_done() and not batches and not report_rows
+            ),
             "unrecognized_count": int(unrecognized),
             "conflict_group_count": len(conflict_groups),
             "categories": list(CATEGORIES),
@@ -525,6 +533,152 @@ class Api:
             "reports": [_report_dict(report) for report in report_rows],
             "report_choices": report_choices,
             "recent_import_paths": recent_paths,
+        }
+
+    # --------------------------------------------------------------- setup
+
+    @_endpoint
+    def inspect_data_dir(self, path: str) -> dict[str, Any]:
+        """Describe a candidate data folder without switching to it."""
+        try:
+            target = appconfig.resolve_data_dir(path)
+        except appconfig.ConfigError as exc:
+            raise ReportError(str(exc)) from exc
+        result: dict[str, Any] = {
+            "path": str(target),
+            "exists": target.is_dir(),
+            "has_database": False,
+            "invoice_count": 0,
+            "batch_count": 0,
+            "report_count": 0,
+        }
+        candidate = target / "invoicedesk.db"
+        if candidate.is_file():
+            summary = self._existing_database_summary(candidate)
+            result.update(summary)
+            # An empty file the app just created is not an existing pool.
+            result["has_database"] = bool(
+                summary["invoice_count"]
+                or summary["batch_count"]
+                or summary["report_count"]
+            )
+        return result
+
+    @_endpoint
+    def select_data_dir(self, path: str) -> dict[str, Any]:
+        """Pin the data folder chosen by the first-run wizard.
+
+        Only an empty pool may switch: an existing database would otherwise be
+        silently abandoned. A folder that already holds ``invoicedesk.db`` is
+        adopted as-is, which is how a reinstall or a new machine rejoins an
+        existing pool.
+        """
+        if self._import_job is not None and self._import_job.running:
+            raise ReportError("导入正在进行，请等导入结束后再更换数据目录。")
+        with contextlib.closing(self._connect()) as connection:
+            batches = connection.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
+            report_count = connection.execute(
+                "SELECT COUNT(*) FROM reports"
+            ).fetchone()[0]
+        if batches or report_count:
+            raise ReportError(
+                "当前发票库已有数据，不能更换数据目录；"
+                "只有新安装或空库才能在这里选择。"
+            )
+        try:
+            target = appconfig.ensure_writable_dir(
+                appconfig.resolve_data_dir(path)
+            )
+        except appconfig.ConfigError as exc:
+            raise ReportError(str(exc)) from exc
+        target_db = target / "invoicedesk.db"
+        summary: dict[str, Any] = {
+            "has_database": False,
+            "invoice_count": 0,
+            "batch_count": 0,
+            "report_count": 0,
+        }
+        if target_db.is_file():
+            existing = self._existing_database_summary(target_db)
+            summary.update(existing)
+            summary["has_database"] = bool(
+                existing["invoice_count"]
+                or existing["batch_count"]
+                or existing["report_count"]
+            )
+        try:
+            appconfig.remember_data_dir(target)
+        except OSError as exc:
+            raise ReportError("无法保存设置，请检查程序目录的写入权限。") from exc
+        self._db_path = target_db
+        self._out_dir = target / "out"
+        self._import_plan = None
+        self._preview_cache.clear()
+        return {
+            "data_dir": str(target),
+            "db_name": target_db.name,
+            **summary,
+        }
+
+    @_endpoint
+    def complete_welcome(self) -> dict[str, Any]:
+        """Remember that the first-run wizard was finished or skipped."""
+        try:
+            appconfig.mark_welcome_done()
+        except OSError as exc:
+            raise ReportError("无法保存设置，请检查程序目录的写入权限。") from exc
+        return {"welcome_done": True}
+
+    def _existing_database_summary(self, db_path: Path) -> dict[str, int]:
+        """Read counts from an existing database without writing or migrating."""
+        try:
+            with contextlib.closing(
+                sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True)
+            ) as connection:
+                version = connection.execute("PRAGMA user_version").fetchone()[0]
+                if version > db.DB_VERSION:
+                    raise db.DatabaseVersionError(
+                        f"数据库版本 {version} 高于当前程序支持的"
+                        f" {db.DB_VERSION}，请升级程序后再打开。"
+                    )
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                if "invoices" not in tables or "batches" not in tables:
+                    raise ReportError(
+                        "这个文件夹里的 invoicedesk.db 不是发票管家的数据库。"
+                    )
+                columns = {
+                    row[1]
+                    for row in connection.execute("PRAGMA table_info(invoices)")
+                }
+                archived = (
+                    " WHERE archived_at = ''" if "archived_at" in columns else ""
+                )
+                invoices = connection.execute(
+                    f"SELECT COUNT(*) FROM invoices{archived}"
+                ).fetchone()[0]
+                batches = connection.execute(
+                    "SELECT COUNT(*) FROM batches"
+                ).fetchone()[0]
+                report_count = (
+                    connection.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
+                    if "reports" in tables
+                    else 0
+                )
+        except sqlite3.Error as exc:
+            raise ReportError(
+                "无法读取这个文件夹里的 invoicedesk.db："
+                "文件可能已损坏，或正被另一个程序占用。"
+            ) from exc
+        return {
+            "invoice_count": int(invoices),
+            "batch_count": int(batches),
+            "report_count": int(report_count),
+            "database_version": int(version),
         }
 
     @_endpoint
@@ -1137,12 +1291,13 @@ class Api:
     # -------------------------------------------------------------- import
 
     @_endpoint
-    def pick_folder(self, current: str = "") -> dict[str, Any]:
+    def pick_folder(self, current: str = "", remember: bool = True) -> dict[str, Any]:
         """Let the user choose a folder with the native dialog.
 
         ``folder_dialog`` is injected by :mod:`app.main`: WinForms dialogs must
         run on the window's GUI thread, while pywebview delivers bridge calls
-        on worker threads.
+        on worker threads. The first-run wizard passes ``remember=False`` so a
+        data folder does not show up as a recent *invoice* folder.
         """
         if self._folder_dialog is None:
             raise ReportError("当前环境不支持文件夹选择，请手动粘贴路径。")
@@ -1151,7 +1306,7 @@ class Api:
             initial = ""
         chosen = self._folder_dialog(initial)
         path = str(chosen or "").strip()
-        if path:
+        if path and remember:
             # Remember a folder as soon as it is picked; the import may have
             # nothing new, but the next import should still start here.
             with contextlib.closing(self._connect()) as connection, connection:

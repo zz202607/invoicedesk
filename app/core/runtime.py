@@ -6,6 +6,10 @@ read-only for normal users and every update replaces it. Packaged builds use
 ``%LOCALAPPDATA%\\InvoiceDesk`` instead, which is local (never OneDrive) and
 survives reinstalls. ``INVOICEDESK_HOME`` overrides the root in either mode.
 
+The first-run wizard can pin a different data folder in
+:mod:`app.core.appconfig`; when it does, the database, exports, and logs follow
+that folder. Environment variables still win over the wizard.
+
 Choosing a default does not weaken the guards in :mod:`app.core.paths`: the
 database and export writers still refuse remote, synced, and unsafe repo paths.
 """
@@ -73,19 +77,46 @@ def app_home() -> Path:
     return repo_root()
 
 
+def configured_data_dir() -> Path | None:
+    """Data folder chosen in the first-run wizard, when one was pinned.
+
+    Imported lazily: :mod:`app.core.appconfig` imports this module to decide
+    where its own settings file lives.
+    """
+    from app.core import appconfig
+
+    return appconfig.data_dir()
+
+
+def suggested_data_dir() -> Path:
+    """Folder the wizard offers first; never remote and never the repo root."""
+    if uses_app_home():
+        return app_home()
+    return repo_root() / "data"
+
+
 def default_db_path() -> Path:
+    data_dir = configured_data_dir()
+    if data_dir is not None:
+        return data_dir / "invoicedesk.db"
     if uses_app_home():
         return app_home() / "invoicedesk.db"
     return Path("data") / "invoicedesk.db"
 
 
 def default_out_dir() -> Path:
+    data_dir = configured_data_dir()
+    if data_dir is not None:
+        return data_dir / "out"
     if uses_app_home():
         return app_home() / "out"
     return Path("out")
 
 
 def log_file() -> Path:
+    data_dir = configured_data_dir()
+    if data_dir is not None:
+        return data_dir / "logs" / "invoicedesk.log"
     if uses_app_home():
         return app_home() / "logs" / "invoicedesk.log"
     return repo_root() / "data" / "logs" / "invoicedesk.log"
