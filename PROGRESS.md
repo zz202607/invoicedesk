@@ -1,7 +1,7 @@
 # 发票管家（InvoiceDesk）· PROGRESS
 
 > 最后更新：2026-10-30
-> 当前阶段：**v1.0.0 已合并（PR #17，`3a71bf7`）；数据/导出分离已提交并开 PR #18，CI 全绿（review 首次空响应，重跑通过），待 _ming 确认合并**
+> 当前阶段：**v1.0.0 数据/导出分离已合并（PR #18，`4b9fb34`），tag `v1.0.0` 已推送**；工作区干净，可开始下一模块
 > 分支：`main` · 仓库：[invoicedesk](https://github.com/zz202607/invoicedesk)
 
 ## 现在
@@ -72,8 +72,7 @@
   「更多 → 关于发票管家…」显示版本/运行方式/数据目录/数据库 schema（bootstrap 增 `database_version`/`frozen`）。
 - README 截图（10-30）：`docs/images/` 四张合成数据界面图（工作台、票面预览与修正、汇总看板、重复票审查）；
   README 状态升级 v1.0.0 并说明版本来源；截图脚本在 `build/`（不入库），用真实 WebView2 驱动。
-- 下一步：PR #18（`feat/data-export-split`，commit `7d5251a`）App/Docs/Tools/review 全绿，待 _ming
-  确认合并；合并后打 tag v1.0.0；黄金集暂缓。
+- 下一步：v1.0.0 已发布（PR #18，tag `v1.0.0`）；按 `ROADMAP.md` 选定下一模块；黄金集暂缓。
 
 ## 不变量（Guardrails）
 
