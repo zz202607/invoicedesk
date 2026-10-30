@@ -428,16 +428,22 @@ def test_id_inputs_reject_booleans_and_fractions(api: Api, tmp_path) -> None:
     assert fractional_batch["ok"] is False
 
 
-def test_output_root_is_created_and_refuses_unsafe_locations(
-    api: Api, monkeypatch
-) -> None:
+def test_output_root_is_created(api: Api) -> None:
     root = api._out_dir.expanduser().resolve()
     assert api._output_root() == root
     assert root.is_dir()
-    monkeypatch.setattr(
-        api_module, "output_path_reason", lambda path: "在仓库内非忽略目录"
-    )
-    with pytest.raises(ReportError, match="输出路径"):
+
+
+def test_output_root_refuses_a_repo_directory(tmp_path) -> None:
+    api = Api(db_path=tmp_path / "workbench.db", out_dir=ROOT / "app")
+    with pytest.raises(ReportError, match="仓库内"):
+        api._output_root()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="UNC paths are Windows-only")
+def test_output_root_refuses_a_remote_share(tmp_path) -> None:
+    api = Api(db_path=tmp_path / "workbench.db", out_dir=r"\\server\share\out")
+    with pytest.raises(ReportError, match="网络共享"):
         api._output_root()
 
 
@@ -1391,6 +1397,37 @@ def test_select_data_dir_moves_an_empty_pool(api: Api, tmp_path, app_config) -> 
     assert count == 1
 
 
+def test_select_data_dir_refreshes_the_default_export_folder(
+    tmp_path, app_config, monkeypatch
+) -> None:
+    api = _packaged_api(tmp_path, monkeypatch)
+    before = api._out_dir
+    new_out = tmp_path / "new-out"
+    monkeypatch.setattr(api_module.runtime, "default_out_dir", lambda: new_out)
+
+    response = api.select_data_dir(str(tmp_path / "新数据"))
+
+    assert response["ok"] is True, response
+    assert api._out_dir == new_out
+    assert api._out_dir != before
+
+
+def test_select_data_dir_keeps_a_remembered_export_folder(
+    tmp_path, app_config
+) -> None:
+    export = tmp_path / "发票" / appconfig.EXPORT_SUBDIR
+    export.mkdir(parents=True)
+    appconfig.remember_export_dir(export.resolve())
+    api = Api(db_path=tmp_path / "workbench.db")
+    assert api._out_dir == export.resolve()
+
+    response = api.select_data_dir(str(tmp_path / "新数据"))
+
+    assert response["ok"] is True, response
+    assert api._out_dir == export.resolve()
+    assert appconfig.export_dir() == export.resolve()
+
+
 def test_select_data_dir_refuses_when_the_pool_has_data(
     api: Api, tmp_path, app_config
 ) -> None:
@@ -1644,6 +1681,61 @@ def test_explicit_out_dir_is_never_moved(
     assert started["data"]["adopted_export_dir"] is None
     _wait_import(api, started["data"]["job_id"])
 
+    assert api._out_dir == tmp_path / "out"
+    assert appconfig.export_dir() is None
+    assert not (folder / appconfig.EXPORT_SUBDIR).exists()
+
+
+def test_import_folder_adopts_the_export_folder(
+    tmp_path, app_config, monkeypatch
+) -> None:
+    api = _packaged_api(tmp_path, monkeypatch)
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+    target = (folder / appconfig.EXPORT_SUBDIR).resolve()
+
+    response = api.import_folder(str(folder))
+
+    assert response["ok"] is True, response
+    assert response["data"]["invoices_imported"] == 1
+    assert appconfig.export_dir() == target
+    assert api._out_dir == target
+    assert _invoice_count(tmp_path / "workbench.db") == 1
+    assert not (target / "invoicedesk.db").exists()
+
+
+def test_import_folder_stops_when_the_export_folder_cannot_be_pinned(
+    tmp_path, app_config, monkeypatch
+) -> None:
+    api = _packaged_api(tmp_path, monkeypatch)
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    def fail(path):
+        raise OSError("denied")
+
+    monkeypatch.setattr(api_module.appconfig, "ensure_writable_dir", fail)
+    response = api.import_folder(str(folder))
+
+    assert response["ok"] is False
+    assert "导出目录" in response["error"]
+    assert appconfig.export_dir() is None
+    assert _invoice_count(tmp_path / "workbench.db") == 0
+
+
+def test_import_folder_does_not_move_an_explicit_output(
+    api: Api, tmp_path, app_config, monkeypatch
+) -> None:
+    monkeypatch.setattr(api_module.runtime, "uses_app_home", lambda: True)
+    folder = tmp_path / "发票"
+    folder.mkdir()
+    make_pdf(folder, full_digital_lines(), name="a.pdf")
+
+    response = api.import_folder(str(folder))
+
+    assert response["ok"] is True, response
     assert api._out_dir == tmp_path / "out"
     assert appconfig.export_dir() is None
     assert not (folder / appconfig.EXPORT_SUBDIR).exists()
