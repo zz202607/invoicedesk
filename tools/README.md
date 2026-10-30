@@ -27,6 +27,17 @@ python tools/build_app.py --skip-smoke
 python tools/build_app.py --skip-build   # re-smoke the existing dist/
 ```
 
+## migrate_data_dir.py
+
+Copies a packaged app home (database, backups, exports, logs) to a new data
+folder, verifies the copied database, and rewrites `config.json` so the next
+start uses it. Close the app first; the old copy is left in place.
+
+```bash
+python tools/migrate_data_dir.py --dry-run --target "E:\\账\\2026年10月\\发票\\InvoiceDeskData"
+python tools/migrate_data_dir.py --target "E:\\账\\2026年10月\\发票\\InvoiceDeskData"
+```
+
 ## make_icon.py
 
 Draws the multi-size `build/icon.ico` with the standard library only; no Pillow.

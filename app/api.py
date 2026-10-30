@@ -504,6 +504,7 @@ class Api:
             "default_month": today.strftime("%Y-%m"),
             "db_name": self._db_path.name,
             "data_dir": str(Path(self._db_path).resolve().parent),
+            "data_dir_pinned": appconfig.data_dir() is not None,
             "suggested_data_dir": str(runtime.suggested_data_dir()),
             # The wizard can only change the data folder while nothing has
             # been written, so an upgrade never hides an existing pool.
@@ -575,12 +576,7 @@ class Api:
         """
         if self._import_job is not None and self._import_job.running:
             raise ReportError("导入正在进行，请等导入结束后再更换数据目录。")
-        with contextlib.closing(self._connect()) as connection:
-            batches = connection.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
-            report_count = connection.execute(
-                "SELECT COUNT(*) FROM reports"
-            ).fetchone()[0]
-        if batches or report_count:
+        if not self._pool_is_empty():
             raise ReportError(
                 "当前发票库已有数据，不能更换数据目录；"
                 "只有新安装或空库才能在这里选择。"
@@ -591,7 +587,7 @@ class Api:
             )
         except appconfig.ConfigError as exc:
             raise ReportError(str(exc)) from exc
-        target_db = target / "invoicedesk.db"
+        target_db = target / appconfig.DB_FILENAME
         summary: dict[str, Any] = {
             "has_database": False,
             "invoice_count": 0,
@@ -610,15 +606,75 @@ class Api:
             appconfig.remember_data_dir(target)
         except OSError as exc:
             raise ReportError("无法保存设置，请检查程序目录的写入权限。") from exc
-        self._db_path = target_db
-        self._out_dir = target / "out"
-        self._import_plan = None
-        self._preview_cache.clear()
+        self._pin_data_dir(target)
         return {
             "data_dir": str(target),
             "db_name": target_db.name,
             **summary,
         }
+
+    def _pool_is_empty(self) -> bool:
+        with contextlib.closing(self._connect()) as connection:
+            batches = connection.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
+            report_count = connection.execute(
+                "SELECT COUNT(*) FROM reports"
+            ).fetchone()[0]
+        return not (batches or report_count)
+
+    def _pin_data_dir(self, target: Path) -> None:
+        """Point every read/write path at ``target`` and drop cached state."""
+        self._db_path = target / appconfig.DB_FILENAME
+        self._out_dir = target / "out"
+        self._import_plan = None
+        self._preview_cache.clear()
+
+    def _import_data_dir_preview(self, source: Path) -> str | None:
+        """Where the first import will store the pool, or None when pinned.
+
+        Read-only: the wizard uses this to tell the user where data will land
+        before anything is written.
+        """
+        # Source checkouts keep data/ beside the code on purpose; only a
+        # packaged app (or an explicit INVOICEDESK_HOME) has a default home
+        # that can be replaced by the import folder.
+        if (
+            not runtime.uses_app_home()
+            or appconfig.data_dir() is not None
+            or not self._pool_is_empty()
+        ):
+            return None
+        candidate = appconfig.data_dir_for_import(source)
+        try:
+            candidate = appconfig.resolve_data_dir(candidate)
+        except appconfig.ConfigError:
+            return None
+        if candidate == Path(self._db_path).resolve().parent:
+            return None
+        return str(candidate)
+
+    def _adopt_import_data_dir(self, source_dir: str) -> str | None:
+        """Pin the first import folder as the data folder when none was chosen.
+
+        Only an empty pool adopts: moving an established pool silently would
+        strand invoices. A failed settings write leaves the current folder in
+        place so the import still runs.
+        """
+        preview = self._import_data_dir_preview(Path(source_dir))
+        if preview is None:
+            return None
+        target = Path(preview)
+        try:
+            appconfig.ensure_writable_dir(target)
+            appconfig.remember_data_dir(target)
+        except (appconfig.ConfigError, OSError) as exc:
+            print(
+                f"[api] data dir not adopted: {redact_paths(str(exc))}",
+                file=sys.stderr,
+            )
+            return None
+        self._pin_data_dir(target)
+        print(f"[api] data dir adopted: {redact_paths(str(target))}", file=sys.stderr)
+        return str(target)
 
     @_endpoint
     def complete_welcome(self) -> dict[str, Any]:
@@ -1424,6 +1480,7 @@ class Api:
             "duplicate_files": plan.duplicate_files,
             "ocr_pages": plan.ocr_pages,
             "reparse_candidates": plan.reparse_candidates,
+            "data_dir_preview": self._import_data_dir_preview(Path(plan.source_dir)),
         }
 
     @_endpoint
@@ -1435,6 +1492,7 @@ class Api:
         if job is not None and job.running:
             raise ReportError("已有导入正在进行，请等待完成或先取消。")
         plan = self._take_import_plan(str(token or "").strip(), path, label)
+        adopted = self._adopt_import_data_dir(plan.source_dir)
         job = _ImportJob(uuid4().hex)
         job.progress("parse", 0, plan.new_files, "")
         self._import_job = job
@@ -1449,6 +1507,8 @@ class Api:
             "job_id": job.job_id,
             "label": plan.label,
             "total": plan.new_files,
+            "data_dir": str(Path(self._db_path).resolve().parent),
+            "adopted_data_dir": adopted,
         }
 
     @_endpoint

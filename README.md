@@ -5,8 +5,8 @@
 > 当前状态：**Phase 3 产品化中，含本地 OCR、自动备份与首次启动向导** — 解析引擎、SQLite 数据层、
 > 导入去重与预检、发票级导出、报销行与报销单 Excel、桌面工作台、字段修正、规则管理、汇总看板、
 > 图片发票 OCR、常用文件夹/表头记忆、待确认队列与报账向导、重复票审查（归档可恢复）、滚动备份与
-> 恢复、首次启动向导（数据目录 + 导入引导）、PyInstaller 单目录包已实现（向导与预检待实机验收），
-> 见 [ROADMAP.md](ROADMAP.md)。
+> 恢复、首次启动向导（数据目录 + 导入引导）、数据目录默认跟随发票文件夹、PyInstaller 单目录包已实现
+> （向导与预检已实机验收），见 [ROADMAP.md](ROADMAP.md)。
 
 ## 解决什么问题
 
@@ -24,7 +24,7 @@
 
 ## 核心原则
 
-- 源发票只读，导出不写回源目录。
+- 源发票只读：首次导入后在发票文件夹下自建 `InvoiceDeskData\` 存放库/备份/导出，不修改源 PDF，也不写其他位置。
 - 财务数据只在本机；不上传云端，不进仓库、不进 CI。
 - 低置信度必须显式标出，每个字段可人工修正。
 - 没有测试/CI 证据不算完成。
@@ -145,17 +145,18 @@ python -m pip install -r requirements-build.txt
 python tools/build_app.py
 ```
 
-产物是 `dist/InvoiceDesk/InvoiceDesk.exe`（one-dir，约 64 MB，含 UI 与依赖），分发时要复制
+产物是 `dist/InvoiceDesk/InvoiceDesk.exe`（one-dir，OCR 后约 246 MB，含 UI 与依赖），分发时要复制
 整个 `dist\InvoiceDesk` 文件夹，不能只拷贝 exe；构建同时生成 `build/icon.ico`。构建脚本先用
 标准库生成多尺寸图标，再跑 PyInstaller，最后用
 `InvoiceDesk.exe --smoke` 在临时目录验证 UI 资源、WebView2 与数据库初始化；任一检查失败都会让
 构建返回非零。`--skip-build` / `--skip-smoke` 可复用现有产物或只构建。
 
 打包版要求 Windows 装有 **Microsoft Edge WebView2 Runtime**；缺失时程序弹窗给出下载地址并退出，
-不会静默失败。数据默认放在 `%LOCALAPPDATA%\InvoiceDesk\`：`invoicedesk.db`、`out\` 导出目录、
-`logs\invoicedesk.log`（滚动 1 MB × 3 份）。不再写入安装目录，升级/重装不会覆盖数据；可用
-`INVOICEDESK_HOME` 改整个根目录，`INVOICEDESK_DB` / `INVOICEDESK_OUT` 单独覆盖数据库与导出目录。
-源码运行时仍使用仓库内 `data/` 与 `out/`。
+不会静默失败。数据默认跟着发票走：首次导入时，在所选发票文件夹下新建 `InvoiceDeskData\`，存放
+`invoicedesk.db`、`backups\`、`out\` 导出目录和 `logs\invoicedesk.log`（滚动 1 MB × 3 份）；
+也可在首次向导里指定一个固定目录。已有库可用 `tools/migrate_data_dir.py` 复制、校验并切换
+（不会删除旧库）。可用 `INVOICEDESK_HOME` 改整个根目录，`INVOICEDESK_DB` / `INVOICEDESK_OUT`
+单独覆盖数据库与导出目录。源码运行时仍使用仓库内 `data/` 与 `out/`。
 
 每次启动和每次有新增文件的导入后，数据库会自动快照到数据库旁的 `backups\`（最多保留 10 份，
 只在本机）。「更多 → 数据备份…」里可以立即备份、打开备份目录或恢复某个快照；恢复前会先把当前
