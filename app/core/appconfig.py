@@ -74,12 +74,21 @@ def save(values: dict[str, Any]) -> None:
 
 
 def data_dir() -> Path | None:
-    """The chosen data folder, or ``None`` when the default applies."""
+    """The chosen data folder, or ``None`` when the default applies.
+
+    The value is normalized so ``..`` in a hand-edited file cannot make the
+    same folder compare unequal across calls. Whether the folder is actually
+    usable is re-checked when the database opens: :func:`app.core.db.connect`
+    still refuses remote, synced, and repository paths, and SQLite refuses a
+    database from a newer version or a foreign schema.
+    """
     raw = load().get(DATA_DIR_KEY)
     if not isinstance(raw, str) or not raw.strip():
         return None
     path = Path(raw).expanduser()
-    return path if path.is_absolute() else None
+    if not path.is_absolute():
+        return None
+    return Path(os.path.normpath(path))
 
 
 def welcome_done() -> bool:

@@ -75,6 +75,12 @@ def test_data_dir_ignores_relative_and_non_string_values(monkeypatch, tmp_path) 
     assert appconfig.data_dir() is None
 
 
+def test_data_dir_normalizes_dot_segments(monkeypatch, tmp_path) -> None:
+    messy = str(tmp_path / "data" / ".." / "data")
+    monkeypatch.setattr(appconfig, "load", lambda: {"data_dir": messy})
+    assert appconfig.data_dir() == tmp_path / "data"
+
+
 def test_mark_welcome_done_preserves_other_settings(cfg, tmp_path) -> None:
     appconfig.save({"data_dir": str(tmp_path), "extra": 1})
     appconfig.mark_welcome_done()
