@@ -1,7 +1,7 @@
 # 发票管家（InvoiceDesk）· PROGRESS
 
 > 最后更新：2026-10-30
-> 当前阶段：**v1.0.0 版本信息、关于弹窗与 README 截图已完成（10-30，PR #17 CI 全绿待确认合并）**；新构建 `build/dist-v1.0` 待替换 `dist`
+> 当前阶段：**v1.0.0 已合并（PR #17，`3a71bf7`）并重打包到 `dist/InvoiceDesk`（245.7MB，smoke 全 true）**；下一步 _ming 实机点按 + 发布 v1.0.0
 > 分支：`main` · 仓库：[invoicedesk](https://github.com/zz202607/invoicedesk)
 
 ## 现在
@@ -38,7 +38,7 @@
   对平；781 行列表 93ms/411KB、看板 88ms；10-29 实机通过滚动/预览/搜索/看板/导出。
 - 打包：PyInstaller one-dir，冻结态库/导出/日志默认跟随 `<发票文件夹>/InvoiceDeskData`；滚动日志、异常钩子、
   WebView2 检测、`--smoke` 自检；OCR 后 245.7MB；版本资源由 `tools/make_version.py` 生成，EXE 属性显示 1.0.0。
-  本次新包在 `build/dist-v1.0`（smoke 全 true），`dist` 被 _ming 11:04 起的旧进程占用，关闭后需重跑构建覆盖。
+  `dist/InvoiceDesk` 已覆盖为 1.0.0（11:47，245.7MB，EXE 属性 1.0.0，smoke 全 true）；`build/dist-v1.0` 是构建验证副本。
 - 合并/审查：私有 PR #2–#8；公开 #1–#7、#10–#16 均经 _ming 确认（部分 review 空响应按基建故障处理）；多轮修复异常路径、回滚、TOCTOU、CSP、并发写。
 - OCR（3c）：`app/core/ocr.py` 随包 RapidOCR 离线识别无文本层页，共用几何解析器与校验，结果待确认/≤medium；
   10 张图片发票全部识别，7–9 月重识别 25/25（21 张补全字段），首载 6.9 秒、约 5.2 秒/页。
@@ -72,7 +72,7 @@
   「更多 → 关于发票管家…」显示版本/运行方式/数据目录/数据库 schema（bootstrap 增 `database_version`/`frozen`）。
 - README 截图（10-30）：`docs/images/` 四张合成数据界面图（工作台、票面预览与修正、汇总看板、重复票审查）；
   README 状态升级 v1.0.0 并说明版本来源；截图脚本在 `build/`（不入库），用真实 WebView2 驱动。
-- 下一步：PR 合并后 _ming 关闭旧窗口，重跑 `tools/build_app.py` 覆盖 `dist` 并点按向导/预检/重复票/备份；随后发布 v1.0.0；黄金集暂缓。
+- 下一步：_ming 在新打包版点按向导/预检/重复票/备份，确认后发布 v1.0.0（打 tag）；黄金集暂缓。
 
 ## 不变量（Guardrails）
 
