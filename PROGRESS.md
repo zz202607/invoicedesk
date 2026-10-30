@@ -1,7 +1,7 @@
 # 发票管家（InvoiceDesk）· PROGRESS
 
 > 最后更新：2026-10-30
-> 当前阶段：**Phase 3b 首次启动向导已实现（待验收）**；导入预检/重复票/备份待实机验收
+> 当前阶段：**Phase 3b 首次启动向导已实现（PR #15 待确认合并）**；导入预检/重复票/备份待实机验收
 > 分支：`main` · 仓库：[invoicedesk](https://github.com/zz202607/invoicedesk)
 
 ## 现在
