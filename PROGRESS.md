@@ -1,7 +1,7 @@
 # 发票管家（InvoiceDesk）· PROGRESS
 
 > 最后更新：2026-10-30
-> 当前阶段：**数据目录跟随首次导入文件夹（打包版）已实现并完成迁移验证（10-30）**；下一步 README 截图/版本信息/v1.0
+> 当前阶段：**数据目录跟随首次导入文件夹（打包版）已实现并迁移（10-30，PR #16 待审）**；下一步 README 截图/版本信息/v1.0
 > 分支：`main` · 仓库：[invoicedesk](https://github.com/zz202607/invoicedesk)
 
 ## 现在
@@ -37,9 +37,9 @@
 - 版式验证/实测：真实 7 月 142 行 8 列逐行一致（含“有票（附注）”），9 月 32/37 行一致；`7报销`
   767 文件 → 781 条（重复 248、冲突 3、待确认 50）26.8 秒，导出 75.8 秒/391 页/66.5MB 对平；781 行
   列表 93ms/411KB、看板 88ms；10-29 实机通过滚动/预览/搜索/看板/导出。
-- 打包：PyInstaller one-dir，冻结态 DB/out/logs 在 `%LOCALAPPDATA%\InvoiceDesk`；滚动日志、异常钩子、
-  WebView2 检测、`--smoke` 自检；OCR 后 245.7MB；10-29 两次重跑（PR #12 后、冲突审查后）、10-30 首次
-  向导合并后重打包，smoke 均全 true。
+- 打包：PyInstaller one-dir，冻结态 DB/out/logs 默认跟随发票文件夹（`InvoiceDeskData`），空库首次导入
+  自动选择；滚动日志、异常钩子、WebView2 检测、`--smoke` 自检；OCR 后 245.7MB；10-29 两次、10-30 两次
+  重打包，smoke 均全 true。
 - 合并/审查：私有 PR #2–#8；公开 #1–#7、#10–#15 均经 _ming 确认（3e `efaf88c`、3b `6439e29`、
   首次向导 `f3aa9fe`；#12/#15 review 空响应按基建故障处理）；多轮修复异常路径、回滚、TOCTOU、CSP、并发写。
 - OCR（3c）：`app/core/ocr.py` 用随包 RapidOCR（离线）识别无文本层页，OCR 行喂给同一几何解析器；
