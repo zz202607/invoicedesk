@@ -38,6 +38,17 @@ WELCOME_DONE_KEY = "welcome_done"
 IMPORT_DATA_SUBDIR = "InvoiceDeskData"
 DB_FILENAME = "invoicedesk.db"
 
+# Sync clients that do not set an environment root (unlike OneDrive). Only the
+# automatic adoption of an import folder consults this list; a folder the user
+# picks by hand is still checked by :func:`resolve_data_dir` alone.
+KNOWN_SYNC_DIR_NAMES = {
+    "dropbox",
+    "google drive",
+    "googledrive",
+    "baidusyncdisk",
+    "nutstore",
+}
+
 
 class ConfigError(ValueError):
     """A user-facing settings problem the API reports as a message."""
@@ -109,6 +120,15 @@ def remember_data_dir(path: str | Path) -> None:
     values = load()
     values[DATA_DIR_KEY] = str(path)
     save(values)
+
+
+def known_sync_folder(path: str | Path) -> str | None:
+    """Name of a well-known local sync folder the path sits inside, if any."""
+    for part in Path(path).parts:
+        folded = part.casefold()
+        if folded in KNOWN_SYNC_DIR_NAMES:
+            return part
+    return None
 
 
 def data_dir_for_import(folder: str | Path) -> Path:

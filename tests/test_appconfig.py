@@ -169,3 +169,13 @@ def test_data_dir_for_import_uses_the_parent_of_a_file(tmp_path) -> None:
         appconfig.data_dir_for_import(pdf)
         == (folder / appconfig.IMPORT_DATA_SUBDIR).resolve()
     )
+
+
+def test_known_sync_folder_matches_only_the_named_directory(tmp_path) -> None:
+    assert appconfig.known_sync_folder(tmp_path / "Dropbox" / "发票") == "Dropbox"
+    assert (
+        appconfig.known_sync_folder(tmp_path / "Google Drive" / "发票")
+        == "Google Drive"
+    )
+    assert appconfig.known_sync_folder(tmp_path / "发票" / "dropbox") == "dropbox"
+    assert appconfig.known_sync_folder(tmp_path / "发票") is None

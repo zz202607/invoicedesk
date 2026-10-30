@@ -104,3 +104,63 @@ def test_copy_data_dir_refuses_repository_internals(tmp_path) -> None:
     home = _make_home(tmp_path)
     with pytest.raises(datamove.DataMoveError, match="仓库"):
         datamove.copy_data_dir(home, repo_root() / "app" / "data")
+
+
+def test_summarize_tolerates_an_old_schema(tmp_path) -> None:
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("CREATE TABLE batches (id INTEGER PRIMARY KEY)")
+        connection.execute(
+            "CREATE TABLE invoices (id INTEGER PRIMARY KEY, amount_total_cents INTEGER)"
+        )
+        connection.execute("PRAGMA user_version = 4")
+        connection.execute("INSERT INTO batches DEFAULT VALUES")
+        connection.execute("INSERT INTO invoices (amount_total_cents) VALUES (12000)")
+        connection.commit()
+    finally:
+        connection.close()
+
+    summary = datamove.summarize(path)
+
+    assert summary.database_version == 4
+    assert summary.invoices == 1
+    assert summary.archived == 0
+    assert summary.reports == 0
+    assert summary.files == 0
+    assert summary.amount_cents == 12000
+
+
+def test_verification_failure_leaves_the_config_untouched(tmp_path, monkeypatch) -> None:
+    home = _make_home(tmp_path)
+    before = (home / "config.json").read_bytes()
+    target = tmp_path / "InvoiceDeskData"
+
+    def broken_copy(source, destination):
+        db.connect(destination).close()
+
+    monkeypatch.setattr(datamove, "_copy_database", broken_copy)
+
+    with pytest.raises(datamove.DataMoveError, match="校验不一致"):
+        datamove.copy_data_dir(home, target)
+    assert (home / "config.json").read_bytes() == before
+
+
+def test_copy_handles_an_open_wal_source(tmp_path) -> None:
+    home = tmp_path / "app-home"
+    home.mkdir()
+    connection = db.connect(home / "invoicedesk.db")
+    try:
+        connection.execute("PRAGMA journal_mode = WAL")
+        add_invoice(connection, index=1, number="WAL1", source_path=r"E:\invoices\wal.pdf")
+        target = tmp_path / "InvoiceDeskData"
+
+        datamove.copy_data_dir(home, target)
+
+        summary = datamove.summarize(target / "invoicedesk.db")
+        assert summary.invoices == 1
+        assert summary.integrity == "ok"
+    finally:
+        connection.close()

@@ -643,6 +643,13 @@ class Api:
             or not self._pool_is_empty()
         ):
             return None
+        sync_folder = appconfig.known_sync_folder(source)
+        if sync_folder is not None:
+            print(
+                f"[api] data dir not adopted: inside sync folder {sync_folder}",
+                file=sys.stderr,
+            )
+            return None
         candidate = appconfig.data_dir_for_import(source)
         try:
             candidate = appconfig.resolve_data_dir(candidate)
@@ -651,6 +658,22 @@ class Api:
         if candidate == Path(self._db_path).resolve().parent:
             return None
         return str(candidate)
+
+    def _import_data_dir_note(self, source: Path) -> str | None:
+        """Why the import will not adopt a data folder inside a sync directory."""
+        if (
+            not runtime.uses_app_home()
+            or appconfig.data_dir() is not None
+            or not self._pool_is_empty()
+        ):
+            return None
+        sync_folder = appconfig.known_sync_folder(source)
+        if sync_folder is None:
+            return None
+        return (
+            f"这个文件夹在 {sync_folder} 同步目录中，财务数据不会保存在那里；"
+            "仍使用当前数据目录。"
+        )
 
     def _adopt_import_data_dir(self, source_dir: str) -> str | None:
         """Pin the first import folder as the data folder when none was chosen.
@@ -667,11 +690,12 @@ class Api:
             appconfig.ensure_writable_dir(target)
             appconfig.remember_data_dir(target)
         except (appconfig.ConfigError, OSError) as exc:
-            print(
-                f"[api] data dir not adopted: {redact_paths(str(exc))}",
-                file=sys.stderr,
-            )
-            return None
+            # The confirmation dialog named this folder; writing elsewhere
+            # silently would break that promise. Stop before any row is written.
+            raise ReportError(
+                f"无法把数据目录切换到 {target}：{redact_paths(str(exc))}。"
+                "请检查文件夹权限，或在首次向导里指定固定的数据目录。"
+            ) from exc
         self._pin_data_dir(target)
         print(f"[api] data dir adopted: {redact_paths(str(target))}", file=sys.stderr)
         return str(target)
@@ -1481,6 +1505,7 @@ class Api:
             "ocr_pages": plan.ocr_pages,
             "reparse_candidates": plan.reparse_candidates,
             "data_dir_preview": self._import_data_dir_preview(Path(plan.source_dir)),
+            "data_dir_note": self._import_data_dir_note(Path(plan.source_dir)),
         }
 
     @_endpoint

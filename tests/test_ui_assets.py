@@ -346,6 +346,7 @@ def test_first_run_wizard_is_wired_to_the_bridge() -> None:
     assert "跟随发票文件夹" in html
     assert "InvoiceDeskData" in html
     assert "data_dir_preview" in html
+    assert "data_dir_note" in html
     assert "welcomeFollowImport" in script
     assert "inspect_data_dir" in script
     assert "select_data_dir" in script

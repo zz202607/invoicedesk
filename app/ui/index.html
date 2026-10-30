@@ -841,6 +841,7 @@
           <p v-if="importPlan.data_dir_preview">
             数据将保存在：<b>{{ importPlan.data_dir_preview }}</b>
           </p>
+          <p v-if="importPlan.data_dir_note" class="muted">{{ importPlan.data_dir_note }}</p>
           <p class="muted">
             导入开始时才写入数据库；过程中可随时取消，取消后本次不会留下任何数据。
             源文件只读，不会被修改。
