@@ -1,7 +1,7 @@
 # 发票管家（InvoiceDesk）· PROGRESS
 
 > 最后更新：2026-10-30
-> 当前阶段：**Phase 3b 首次启动向导已实现（PR #15 待确认合并）**；导入预检/重复票/备份待实机验收
+> 当前阶段：**Phase 3b 首次启动向导已合并（`f3aa9fe`）**；导入预检/重复票/备份/向导待实机验收
 > 分支：`main` · 仓库：[invoicedesk](https://github.com/zz202607/invoicedesk)
 
 ## 现在
@@ -39,8 +39,8 @@
   修复源 PDF 句柄泄漏；781 行列表 93ms/411KB、看板 88ms；10-29 实机通过滚动/预览/搜索/看板/导出。
 - 打包：PyInstaller one-dir，冻结态 DB/out/logs 在 `%LOCALAPPDATA%\InvoiceDesk`；滚动日志、异常钩子、
   WebView2 检测、`--smoke` 自检；OCR 后 245.7MB；10-29 两次重跑（PR #12 后、冲突审查后）smoke 全 true。
-- 合并/审查：私有 PR #2–#8；公开 #1–#7、#10–#12 均经 _ming 确认（3e `efaf88c`、3b `6439e29`；
-  #12 review 空响应按基建故障处理）；2b–2e 多轮修复异常路径、回滚、TOCTOU、LIKE 转义、CSP、并发写。
+- 合并/审查：私有 PR #2–#8；公开 #1–#7、#10–#15 均经 _ming 确认（3e `efaf88c`、3b `6439e29`、
+  首次向导 `f3aa9fe`；#12/#15 review 空响应按基建故障处理）；多轮修复异常路径、回滚、TOCTOU、CSP、并发写。
 - OCR（3c）：`app/core/ocr.py` 用随包 RapidOCR（离线）识别无文本层页，OCR 行喂给同一几何解析器；
   共用校验；红章遮「普通」时按票号兜底票型；买卖方按标签/列排序；结果标「待确认」、置信度≤medium。
 - 体验（3c）：DB schema v5 `settings`；记住最近导入文件夹与报销单公司/部门/报销人；报销单 Excel
