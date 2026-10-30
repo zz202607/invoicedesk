@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "invoice-desk"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local-first invoice organizer and reimbursement sheet generator"
 # rapidocr-onnxruntime caps at <3.13; the packaged build runs Python 3.11.
 requires-python = ">=3.11"

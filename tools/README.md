@@ -38,6 +38,17 @@ python tools/migrate_data_dir.py --dry-run --target "E:\\账\\2026年10月\\发�
 python tools/migrate_data_dir.py --target "E:\\账\\2026年10月\\发票\\InvoiceDeskData"
 ```
 
+## make_version.py
+
+Writes `build/version_info.txt` (a PyInstaller `VSVersionInfo` literal) from the
+version in `pyproject.toml`, so the packaged EXE's Properties page shows the
+same release as the app. `build_app.py` calls it before every build.
+
+```bash
+python tools/make_version.py            # build/version_info.txt
+python tools/make_version.py --out X    # write somewhere else
+```
+
 ## make_icon.py
 
 Draws the multi-size `build/icon.ico` with the standard library only; no Pillow.

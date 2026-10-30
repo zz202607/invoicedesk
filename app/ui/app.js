@@ -172,6 +172,7 @@ createApp({
       dashboardLoading: false,
       dashboard: null,
       showShortcutsModal: false,
+      showAboutModal: false,
       themeMode: 'auto',
       busy: '',
       toast: { message: '', kind: 'info', timer: null },
@@ -249,6 +250,7 @@ createApp({
         this.showImportModal ||
         this.showDashboardModal ||
         this.showShortcutsModal ||
+        this.showAboutModal ||
         this.showWizard ||
         Boolean(this.exportResult)
       );
@@ -377,6 +379,7 @@ createApp({
           this.moreMenuOpen = false;
         } else if (this.exportResult) this.exportResult = null;
         else if (this.showShortcutsModal) this.showShortcutsModal = false;
+        else if (this.showAboutModal) this.showAboutModal = false;
         else if (this.showDashboardModal) this.showDashboardModal = false;
         else if (this.showWizard) this.closeWizard();
         else if (this.showReportModal) this.showReportModal = false;
@@ -1730,6 +1733,11 @@ createApp({
     openShortcutsFromMenu() {
       this.moreMenuOpen = false;
       this.openShortcuts();
+    },
+
+    openAboutFromMenu() {
+      this.moreMenuOpen = false;
+      this.showAboutModal = true;
     },
 
     async exportReport() {

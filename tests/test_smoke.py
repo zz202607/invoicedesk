@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -64,7 +65,8 @@ class FakeWebview:
 
 
 def test_version_is_present() -> None:
-    assert __version__ == "0.1.0"
+    # The exact release is pinned against pyproject.toml in test_packaging.
+    assert re.fullmatch(r"\d+\.\d+\.\d+", __version__)
 
 
 def test_main_wires_the_window_without_starting_a_real_gui() -> None:
